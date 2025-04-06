@@ -86,3 +86,4 @@ uploads/cdn/*.*
 
 .mvn/*.*
 .idea/*.*
+target/*.*
