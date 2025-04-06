@@ -1,0 +1,85 @@
+# Java
+*.class
+*.jar
+*.war
+*.ear
+
+# Maven
+target/
+
+# Gradle
+.gradle/
+build/
+
+# IDEs
+.idea/
+*.iml
+*.ipr
+*.iws
+*.log
+*.swp
+*.swo
+.vscode/
+
+# Eclipse
+.project
+.classpath
+.csettings/
+.settings/
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Environment files
+.env
+.env.*
+
+# Local configuration
+application-local.yml
+application-local.properties
+
+# Coverage and reports
+coverage/
+jacoco.exec
+test-output/
+
+# Node (if you have frontend or assets)
+node_modules/
+dist/
+build/
+
+# Temporary files
+*.tmp
+*.bak
+*.old
+*.orig
+
+# CDNs or Uploads
+cdn/
+uploads/
+
+# Database files
+*.h2.db
+*.mv.db
+*.sqlite
+
+# IntelliJ patch files
+.idea_modules/
+out/
+
+# Custom temp directories
+tmp/
+temp/
+.cache/
+
+# Ignore any local secrets or credentials
+secrets/
+config/private/
+
+UploadFile/*.*
+uploads/cdn/*.*
