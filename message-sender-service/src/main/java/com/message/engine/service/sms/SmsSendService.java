@@ -86,7 +86,7 @@ public class SmsSendService {
 
     private boolean trySend(NotificationConfig config, String to, String text) {
         try {
-            Map<String, Object> resolvedConfig = smsConnectionPoolManager.getSmsConfig(config);
+            Map<String, Object> resolvedConfig = config.getConfig();
             SmsSender sender = smsSenderFactory.getSender(config.getProvider().toLowerCase());
             sender.sendSms(resolvedConfig, to, text);
             log.info("✅ SMS sent to {} using provider {}", to, config.getProvider());

@@ -54,6 +54,9 @@ public class NotificationConfigController {
     @Value("${sms.queue.name}")
     private String smsQueueName;
 
+    @Value("${whatsapp.queue.name}")
+    private String whatsappQueueName;
+
     @Value("${email.cache.eviction}")
     private String emailCacheEvictionQueueName;
 
@@ -234,4 +237,63 @@ public class NotificationConfigController {
 
         return ResponseEntity.ok("✅ SMS request processed successfully.");
     }
+
+    @PostMapping("/send-whatsapp")
+    public ResponseEntity<String> sendWhatsApp(@Valid @RequestBody NotificationRequestDTO requestDTO) {
+        log.info("📲 Received WhatsApp send request with configId={}, templateId={}",
+                requestDTO.getNotificationConfigId(), requestDTO.getTemplateId());
+
+        NotificationConfig config = configService.findById(requestDTO.getNotificationConfigId());
+        if (config == null || !config.isActive()) {
+            return ResponseEntity.badRequest().body("❌ Invalid or inactive NotificationConfig ID");
+        }
+
+        TemplateEntity template = templateService.getTemplateById(requestDTO.getTemplateId()).orElse(null);
+        if (template == null) {
+            return ResponseEntity.badRequest().body("❌ Invalid Template ID: Template not found");
+        }
+
+        if (requestDTO.isScheduled()) {
+            ScheduledNotification scheduled = ScheduledNotification.builder()
+                    .notificationConfigId(requestDTO.getNotificationConfigId())
+                    .templateId(requestDTO.getTemplateId())
+                    .toEmail(requestDTO.getTo())
+                    .emailSubject(null)
+                    .customParams(requestDTO.getCustomParams())
+                    .scheduleCron(requestDTO.getScheduleCron())
+                    .active(true)
+                    .build();
+            scheduledNotificationService.saveScheduledNotification(scheduled);
+            return ResponseEntity.ok("✅ Scheduled WhatsApp message stored.");
+        }
+
+        try {
+            int maxInlineChars = maxInlineKb * 1024;
+            String resolvedMessage = TemplateUtil.resolveTemplateWithParams(template.getContent(), requestDTO.getCustomParams());
+
+            if (resolvedMessage != null && resolvedMessage.length() > maxInlineChars) {
+                String cdnUrl = htmlCdnUploader.uploadHtmlAsFile(resolvedMessage);
+                template.setCdnUrl(cdnUrl);
+                template.setContent(null);
+            } else {
+                template.setContent(resolvedMessage);
+            }
+
+            NotificationPayloadDTO payload = new NotificationPayloadDTO();
+            payload.setTo(requestDTO.getTo());
+            payload.setSubject(resolvedMessage);
+            payload.setSnapshotConfig(config);
+            payload.setSnapshotTemplate(template);
+
+            String jsonPayload = JsonUtil.toJsonWithJavaTime(payload);
+            messageProducer.sendMessage(whatsappQueueName, jsonPayload, false);
+
+        } catch (IOException e) {
+            log.error("❌ Failed to serialize or upload WhatsApp payload", e);
+            return ResponseEntity.internalServerError().body("❌ Failed to send WhatsApp notification");
+        }
+
+        return ResponseEntity.ok("✅ WhatsApp request processed successfully.");
+    }
+
 }

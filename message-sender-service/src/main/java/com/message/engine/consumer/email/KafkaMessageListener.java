@@ -34,12 +34,6 @@ public class KafkaMessageListener {
     @Autowired
     private EmailSendService emailSendService;
 
-    @Autowired
-    private NotificationConfigCacheEvictionService evictionService;
-
-    @Autowired
-    private FileStorageConfigCacheEvictionService fileStorageConfigCacheEvictionService;
-
     @KafkaListener(topics = "${email.queue.name}", groupId = "email-consumer-group")
     public void listenEmailQueue(String message) throws JsonProcessingException {
         log.info("[Kafka] Consumed message: {}", message);
@@ -51,23 +45,5 @@ public class KafkaMessageListener {
                 log.error("❌ Failed to process email message", e);
             }
         });
-    }
-
-    @KafkaListener(
-            topics = "${email.cache.eviction}",
-            groupId = "#{T(java.util.UUID).randomUUID().toString()}"
-    )
-    public void listenEmailCacheEviction(String message) {
-        log.info("[Kafka] [Eviction Queue] Consumed message: {}", message);
-        evictionService.handleMessage(message);
-    }
-
-    @KafkaListener(
-            topics = "${storage.cache.eviction}",
-            groupId = "#{T(java.util.UUID).randomUUID().toString()}"
-    )
-    public void listenStorageCacheEviction(String message) {
-        log.info("[Kafka] [Eviction Queue] Consumed message: {}", message);
-        fileStorageConfigCacheEvictionService.handleMessage(message);
     }
 }
