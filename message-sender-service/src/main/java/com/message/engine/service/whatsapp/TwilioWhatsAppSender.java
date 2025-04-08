@@ -21,7 +21,6 @@ public class TwilioWhatsAppSender implements WhatsAppSender {
         String toNumber = "whatsapp:" + to;
 
         try {
-            // If message only, send text
             if (attachments == null || attachments.isEmpty()) {
                 Message.creator(
                         new PhoneNumber(toNumber),
@@ -34,8 +33,8 @@ public class TwilioWhatsAppSender implements WhatsAppSender {
                     Message.creator(
                             new PhoneNumber(toNumber),
                             new PhoneNumber(from),
-                            message // Optional text with media
-                    ).setMediaUrl(List.of(mediaUri)).create(); // ⚠️ This was removed in v10
+                            message
+                    ).setMediaUrl(List.of(mediaUri)).create();
                 }
             }
         } catch (Exception e) {

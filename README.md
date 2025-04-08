@@ -671,7 +671,105 @@ curl -X POST http://localhost:8112/api/config/send-push   -H "Content-Type: appl
 Hi {{customerName}}, your order {{orderId}} is confirmed. Amount: ${{amount}}.
 ```
 
+```markdown
+# 📞 Voice Call Notification Service - Usage Guide
 
+This guide explains how to send automated voice calls using **Twilio Voice API** with dynamic templates.
+
+---
+
+## 1️⃣ Save Voice Template (TwiML XML)
+
+```bash
+curl -X POST http://localhost:8112/api/template/save \
+  -H "Content-Type: application/json" \
+  -d '{
+        "templateName": "Order Voice Confirmation",
+        "content": "<Response><Say voice=\"alice\">Hello {{customerName}}, your order {{orderId}} has been confirmed. Total amount is ${{amount}}.</Say></Response>",
+        "createdBy": "vishal.gupta",
+        "createdAt": "2025-04-08T12:00:00"
+      }'
+```
+
+---
+
+## 2️⃣ Get All Templates
+
+```bash
+curl -X GET http://localhost:8112/api/template/all
+```
+
+---
+
+## 3️⃣ Save Twilio Voice Notification Config
+
+```bash
+curl -X POST http://localhost:8112/api/config \
+  -H "Content-Type: application/json" \
+  -d '{
+        "clientName": "twilio-voice-client",
+        "channel": "voice",
+        "provider": "twilio",
+        "config": {
+          "accountSid": "ACXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+          "authToken": "your_twilio_auth_token",
+          "from": "+14155552671"
+        },
+        "fallbackConfigId": null,
+        "isActive": true
+      }'
+```
+
+---
+
+## 4️⃣ Get All Notification Configs
+
+```bash
+curl -X GET http://localhost:8112/api/config/all
+```
+
+---
+
+## 5️⃣ Send Voice Notification
+
+```bash
+curl -X POST http://localhost:8112/api/config/send-voice \
+  -H "Content-Type: application/json" \
+  -d '{
+        "notificationConfigId": "REPLACE_WITH_CONFIG_ID",
+        "templateId": "REPLACE_WITH_TEMPLATE_ID",
+        "to": "+919876543210",
+        "customParams": {
+          "customerName": "Vishal Gupta",
+          "orderId": "ORD-98765",
+          "amount": "250"
+        },
+        "scheduled": false
+      }'
+```
+
+---
+
+## 🧠 Notes
+
+- Template content must be in **TwiML (Twilio XML)** format.
+- Use `{{key}}` to inject dynamic `customParams` in your template.
+- `to` must be a valid international phone number.
+- `scheduled: false` means the call will be triggered immediately.
+- Add fallback logic via `fallbackConfigId` or `privacyFallbackConfig`.
+
+---
+
+## ✅ Sample Rendered Output
+
+```xml
+<Response>
+  <Say voice="alice">Hello Vishal Gupta, your order ORD-98765 has been confirmed. Total amount is $250.</Say>
+</Response>
+```
+```
+
+---
 
 ---
 

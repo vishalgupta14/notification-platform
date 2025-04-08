@@ -94,7 +94,7 @@ public class WhatsAppSendService {
     private boolean trySend(NotificationConfig config, String to, String message, List<File> attachments) {
         try {
             Map<String, Object> resolvedConfig = config.getConfig();
-            WhatsAppSender sender = senderFactory.getSender(config.getProvider()+"-"+config.getChannel());
+            WhatsAppSender sender = senderFactory.getSender(config.getProvider()+"-whatsapp");
             sender.sendWhatsApp(resolvedConfig, to, message, attachments);
             log.info("✅ WhatsApp sent to {} using {}", to, config.getProvider());
             return true;

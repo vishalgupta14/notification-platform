@@ -2,6 +2,7 @@ package com.message.node.controller;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.message.node.rate.limiter.RateLimiterService;
 import com.notification.common.dto.NotificationConfigDTO;
 import com.notification.common.dto.NotificationPayloadDTO;
 import com.notification.common.dto.NotificationRequestDTO;
@@ -20,6 +21,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -48,6 +50,8 @@ public class NotificationConfigController {
 
     private final HtmlCdnUploader htmlCdnUploader;
 
+    private final RateLimiterService rateLimiterService;
+
     @Value("${email.queue.name}")
     private String emailQueueName;
 
@@ -66,12 +70,16 @@ public class NotificationConfigController {
     @Value("${push.queue.name}")
     private String pushQueueName;
 
-    public NotificationConfigController(NotificationConfigService configService, MessageProducer messageProducer, TemplateService templateService, ScheduledNotificationService scheduledNotificationService, HtmlCdnUploader htmlCdnUploader) {
+    @Value("${voice.queue.name}")
+    private String voiceQueueName;
+
+    public NotificationConfigController(NotificationConfigService configService, MessageProducer messageProducer, TemplateService templateService, ScheduledNotificationService scheduledNotificationService, HtmlCdnUploader htmlCdnUploader, RateLimiterService rateLimiterService) {
         this.configService = configService;
         this.messageProducer = messageProducer;
         this.templateService = templateService;
         this.scheduledNotificationService = scheduledNotificationService;
         this.htmlCdnUploader = htmlCdnUploader;
+        this.rateLimiterService = rateLimiterService;
     }
 
     @PostMapping
@@ -133,6 +141,11 @@ public class NotificationConfigController {
     public ResponseEntity<String> sendNotification(@Valid @RequestBody NotificationRequestDTO requestDTO) {
         log.info("Received notification send request with configId={}, templateId={}",
                 requestDTO.getNotificationConfigId(), requestDTO.getTemplateId());
+
+        if (!rateLimiterService.isAllowed(emailQueueName)) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .body("🚫 Rate limit exceeded for email channel");
+        }
 
         NotificationConfig config = configService.findById(requestDTO.getNotificationConfigId());
         if (config == null || !config.isActive()) {
@@ -202,6 +215,11 @@ public class NotificationConfigController {
         log.info("📲 Received SMS send request with configId={}, templateId={}",
                 requestDTO.getNotificationConfigId(), requestDTO.getTemplateId());
 
+        if (!rateLimiterService.isAllowed(smsQueueName)) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .body("🚫 Rate limit exceeded for email channel");
+        }
+
         NotificationConfig config = configService.findById(requestDTO.getNotificationConfigId());
         if (config == null || !config.isActive()) {
             return ResponseEntity.badRequest().body("❌ Invalid or inactive NotificationConfig ID");
@@ -245,6 +263,11 @@ public class NotificationConfigController {
     public ResponseEntity<String> sendWhatsApp(@Valid @RequestBody NotificationRequestDTO requestDTO) {
         log.info("📲 Received WhatsApp send request with configId={}, templateId={}",
                 requestDTO.getNotificationConfigId(), requestDTO.getTemplateId());
+
+        if (!rateLimiterService.isAllowed(whatsappQueueName)) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .body("🚫 Rate limit exceeded for email channel");
+        }
 
         NotificationConfig config = configService.findById(requestDTO.getNotificationConfigId());
         if (config == null || !config.isActive()) {
@@ -304,6 +327,12 @@ public class NotificationConfigController {
         log.info("📳 Received Push Notification send request with configId={}, templateId={}",
                 requestDTO.getNotificationConfigId(), requestDTO.getTemplateId());
 
+        if (!rateLimiterService.isAllowed(pushQueueName)) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .body("🚫 Rate limit exceeded for email channel");
+        }
+
+
         NotificationConfig config = configService.findById(requestDTO.getNotificationConfigId());
         if (config == null || !config.isActive()) {
             return ResponseEntity.badRequest().body("❌ Invalid or inactive NotificationConfig ID");
@@ -342,5 +371,70 @@ public class NotificationConfigController {
 
         return ResponseEntity.ok("✅ Push notification request queued successfully.");
     }
+
+    @PostMapping("/send-voice")
+    public ResponseEntity<String> sendVoiceNotification(@Valid @RequestBody NotificationRequestDTO requestDTO) {
+        log.info("📞 Received voice call request with configId={}, templateId={}",
+                requestDTO.getNotificationConfigId(), requestDTO.getTemplateId());
+
+        if (!rateLimiterService.isAllowed(voiceQueueName)) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .body("🚫 Rate limit exceeded for email channel");
+        }
+
+
+        NotificationConfig config = configService.findById(requestDTO.getNotificationConfigId());
+        if (config == null || !config.isActive()) {
+            return ResponseEntity.badRequest().body("❌ Invalid or inactive NotificationConfig ID");
+        }
+
+        TemplateEntity template = templateService.getTemplateById(requestDTO.getTemplateId())
+                .orElse(null);
+        if (template == null) {
+            return ResponseEntity.badRequest().body("❌ Invalid Template ID: Template not found");
+        }
+
+        if (requestDTO.isScheduled()) {
+            ScheduledNotification scheduled = ScheduledNotification.builder()
+                    .notificationConfigId(requestDTO.getNotificationConfigId())
+                    .templateId(requestDTO.getTemplateId())
+                    .to(requestDTO.getTo())
+                    .customParams(requestDTO.getCustomParams())
+                    .scheduleCron(requestDTO.getScheduleCron())
+                    .active(true)
+                    .build();
+            scheduledNotificationService.saveScheduledNotification(scheduled);
+            return ResponseEntity.ok("✅ Scheduled voice call stored.");
+        }
+
+        try {
+            int maxInlineChars = maxInlineKb * 1024;
+            String resolvedTwiML = template.getContent();
+            resolvedTwiML = TemplateUtil.resolveTemplateWithParams(resolvedTwiML, requestDTO.getCustomParams());
+
+            if (resolvedTwiML != null && resolvedTwiML.length() > maxInlineChars) {
+                String cdnUrl = htmlCdnUploader.uploadHtmlAsFile(resolvedTwiML);
+                template.setCdnUrl(cdnUrl);
+                template.setContent(null);
+            } else {
+                template.setContent(resolvedTwiML);
+            }
+
+            NotificationPayloadDTO payload = new NotificationPayloadDTO();
+            payload.setTo(requestDTO.getTo());
+            payload.setSnapshotConfig(config);
+            payload.setSnapshotTemplate(template);
+
+            String jsonPayload = JsonUtil.toJsonWithJavaTime(payload);
+            messageProducer.sendMessage(voiceQueueName, jsonPayload, false);
+
+        } catch (IOException e) {
+            log.error("❌ Failed to serialize or upload voice payload", e);
+            return ResponseEntity.internalServerError().body("❌ Failed to send voice call");
+        }
+
+        return ResponseEntity.ok("✅ Voice call request processed successfully.");
+    }
+
 
 }
