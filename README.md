@@ -443,6 +443,235 @@ curl -X POST http://localhost:8112/api/config/send-sms \
 Hi {{customerName}}, your order {{orderId}} is confirmed. Use OTP: {{otp}}.
 ```
 
+## 💬 WhatsApp Notification Service - Usage Guide
+
+This guide demonstrates how to work with the WhatsApp Notification APIs:
+
+- ✅ Save templates for WhatsApp
+- 🔐 Configure providers like Twilio
+- 📤 Send WhatsApp messages via ActiveMQ/Kafka
+
+---
+
+### 1️⃣ Save WhatsApp Template
+
+```bash
+curl -X POST http://localhost:8112/api/template/save \
+  -H "Content-Type: application/json" \
+  -d '{
+        "templateName": "Order Confirmation WhatsApp Template",
+        "content": "Hi John, your order #12345 has been confirmed. Amount: $250. Delivery in 2 days.",
+        "createdBy": "vishal.gupta",
+        "createdAt": "2025-04-07T10:00:00"
+      }'
+```
+
+---
+
+### 2️⃣ Get All Templates
+
+```bash
+curl -X GET http://localhost:8112/api/template/all
+```
+
+---
+
+### 3️⃣ Save Twilio WhatsApp Config
+
+```bash
+curl -X POST http://localhost:8112/api/config \
+  -H "Content-Type: application/json" \
+  -d '{
+        "clientName": "twilio-whatsapp-client",
+        "channel": "whatsapp",
+        "provider": "twilio",
+        "config": {
+          "provider": "twilio",
+          "accountSid": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "authToken": "xxxxxxxxxxxxxxxxxxxxxx",
+          "from": "+1415xxxxxxx"
+        },
+        "fallbackConfigId": null,
+        "isActive": true
+      }'
+```
+
+---
+
+### 4️⃣ Get All Configs
+
+```bash
+curl -X GET http://localhost:8112/api/config/all
+```
+
+---
+
+### 5️⃣ Send WhatsApp Notification
+
+```bash
+curl -X POST http://localhost:8112/api/config/send-whatsapp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "notificationConfigId": "REPLACE_WITH_CONFIG_ID",
+    "templateId": "REPLACE_WITH_TEMPLATE_ID",
+    "to": "+919876543210",
+    "customParams": {
+      "customerName": "Vishal Gupta",
+      "orderId": "ORD-98765",
+      "otp": "123456"
+    },
+    "scheduled": false
+  }'
+```
+
+---
+
+### 🧠 Notes
+
+- 🔁 `customParams` are injected into the template using `{{key}}` syntax.
+- 📸 Attachments like images/videos can be added to the template definition.
+- ⏱️ `scheduled: false` = Send immediately.
+- 🔐 Avoid hardcoding real tokens/passwords. Use secrets/vaults.
+- 📌 Replace placeholder IDs (`notificationConfigId`, `templateId`) with actual ones from your DB.
+
+---
+
+### ✅ Sample Template with Placeholders
+
+```
+Hi {{customerName}}, your order {{orderId}} is confirmed. Use OTP: {{otp}}.
+```
+
+
+## 📲 Push Notification Service - Usage Guide
+
+This guide demonstrates how to use the Push Notification APIs using Firebase (FCM).
+
+---
+
+### 1️⃣ Register FCM Token
+
+```bash
+curl -X POST http://localhost:8112/api/fcm/register   -H "Content-Type: application/json"   -d '{
+        "email": "user@example.com",
+        "phone": "+911234567890",
+        "fcmToken": "FCM_DEVICE_TOKEN"
+      }'
+```
+
+---
+
+### 2️⃣ Save Push Notification Template
+
+```bash
+curl -X POST http://localhost:8112/api/template/save \
+  -H "Content-Type: application/json" \
+  -d '{
+        "templateName": "Order Confirmation Push Notification",
+        "content": "Hi John, your order #12345 has been confirmed. Amount: $250. Delivery in 2 days.",
+        "createdBy": "vishal.gupta",
+        "createdAt": "2025-04-07T10:00:00"
+      }'
+```
+
+---
+
+### 3️⃣ Get All Templates
+
+```bash
+curl -X GET http://localhost:8112/api/template/all
+```
+
+---
+
+### 4️⃣ Save Firebase Push Notification Config
+
+```bash
+curl -X POST http://localhost:8112/api/config \
+  -H "Content-Type: application/json" \
+  -d '{
+        "clientName": "push-notifications-client",
+        "channel": "push-notification",
+        "provider": "firebase",
+        "config": {
+          "firebaseJson": {
+            "project_info": {
+              "project_number": "981287745460",
+              "project_id": "notification-platform-22f81",
+              "storage_bucket": "notification-platform-22f81.firebasestorage.app"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:981287745460:android:b86b8579d0db92ba7724e1",
+                  "android_client_info": {
+                    "package_name": "com.message.engine"
+                  }
+                },
+                "api_key": [
+                  {
+                    "current_key": "AIzaSyDUDOa2rU1TqfO9GftdU8Y83IFArDg5iuw"
+                  }
+                ],
+                "services": {
+                  "appinvite_service": {
+                    "other_platform_oauth_client": []
+                  }
+                }
+              }
+            ],
+            "configuration_version": "1"
+          }
+        },
+        "fallbackConfigId": null,
+        "isActive": true
+      }'
+```
+
+---
+
+### 5️⃣ Get All Configs
+
+```bash
+curl -X GET http://localhost:8112/api/config/all
+```
+
+---
+
+### 6️⃣ Send Push Notification
+
+```bash
+curl -X POST http://localhost:8112/api/config/send-push   -H "Content-Type: application/json"   -d '{
+        "notificationConfigId": "REPLACE_WITH_CONFIG_ID",
+        "templateId": "REPLACE_WITH_TEMPLATE_ID",
+        "to": "user@example.com",
+        "customParams": {
+          "customerName": "Vishal Gupta",
+          "orderId": "ORD-98765",
+          "amount": "250"
+        },
+        "scheduled": false
+      }'
+```
+
+---
+
+### 🧠 Notes
+
+- `customParams` are injected into the template using `{{key}}` syntax.
+- Scheduled = `false` means immediate sending.
+- `to` can be an email or phone to resolve the FCM token.
+- Replace placeholder IDs (`notificationConfigId`, `templateId`) with actual ones from your DB.
+
+---
+
+### ✅ Sample Template
+
+```
+Hi {{customerName}}, your order {{orderId}} is confirmed. Amount: ${{amount}}.
+```
+
+
 
 ---
 

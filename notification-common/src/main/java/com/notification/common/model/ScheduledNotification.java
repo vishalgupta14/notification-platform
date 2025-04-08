@@ -19,7 +19,7 @@ public class ScheduledNotification {
 
     private String notificationConfigId;
     private String templateId;
-    private String toEmail;
+    private String to;
     private List<String> cc;
     private List<String> bcc;
     private String emailSubject;

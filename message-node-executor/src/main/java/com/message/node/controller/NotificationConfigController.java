@@ -63,6 +63,9 @@ public class NotificationConfigController {
     @Value("${email.template.max.inline.kb:100}")
     private int maxInlineKb;
 
+    @Value("${push.queue.name}")
+    private String pushQueueName;
+
     public NotificationConfigController(NotificationConfigService configService, MessageProducer messageProducer, TemplateService templateService, ScheduledNotificationService scheduledNotificationService, HtmlCdnUploader htmlCdnUploader) {
         this.configService = configService;
         this.messageProducer = messageProducer;
@@ -146,7 +149,7 @@ public class NotificationConfigController {
                 ScheduledNotification scheduled = ScheduledNotification.builder()
                         .notificationConfigId(requestDTO.getNotificationConfigId())
                         .templateId(requestDTO.getTemplateId())
-                        .toEmail(requestDTO.getTo())
+                        .to(requestDTO.getTo())
                         .cc(requestDTO.getCc())
                         .bcc(requestDTO.getBcc())
                         .emailSubject(requestDTO.getEmailSubject())
@@ -214,7 +217,7 @@ public class NotificationConfigController {
             ScheduledNotification scheduled = ScheduledNotification.builder()
                     .notificationConfigId(requestDTO.getNotificationConfigId())
                     .templateId(requestDTO.getTemplateId())
-                    .toEmail(requestDTO.getTo())
+                    .to(requestDTO.getTo())
                     .emailSubject(requestDTO.getEmailSubject())
                     .customParams(requestDTO.getCustomParams())
                     .scheduleCron(requestDTO.getScheduleCron())
@@ -257,7 +260,7 @@ public class NotificationConfigController {
             ScheduledNotification scheduled = ScheduledNotification.builder()
                     .notificationConfigId(requestDTO.getNotificationConfigId())
                     .templateId(requestDTO.getTemplateId())
-                    .toEmail(requestDTO.getTo())
+                    .to(requestDTO.getTo())
                     .emailSubject(null)
                     .customParams(requestDTO.getCustomParams())
                     .scheduleCron(requestDTO.getScheduleCron())
@@ -294,6 +297,50 @@ public class NotificationConfigController {
         }
 
         return ResponseEntity.ok("✅ WhatsApp request processed successfully.");
+    }
+
+    @PostMapping("/send-push")
+    public ResponseEntity<String> sendPushNotification(@Valid @RequestBody NotificationRequestDTO requestDTO) {
+        log.info("📳 Received Push Notification send request with configId={}, templateId={}",
+                requestDTO.getNotificationConfigId(), requestDTO.getTemplateId());
+
+        NotificationConfig config = configService.findById(requestDTO.getNotificationConfigId());
+        if (config == null || !config.isActive()) {
+            return ResponseEntity.badRequest().body("❌ Invalid or inactive NotificationConfig ID");
+        }
+
+        TemplateEntity template = templateService.getTemplateById(requestDTO.getTemplateId()).orElse(null);
+        if (template == null) {
+            return ResponseEntity.badRequest().body("❌ Invalid Template ID: Template not found");
+        }
+
+        if (requestDTO.isScheduled()) {
+            ScheduledNotification scheduled = ScheduledNotification.builder()
+                    .notificationConfigId(requestDTO.getNotificationConfigId())
+                    .templateId(requestDTO.getTemplateId())
+                    .to(requestDTO.getTo())
+                    .emailSubject(null)
+                    .customParams(requestDTO.getCustomParams())
+                    .scheduleCron(requestDTO.getScheduleCron())
+                    .active(true)
+                    .build();
+            scheduledNotificationService.saveScheduledNotification(scheduled);
+            return ResponseEntity.ok("✅ Scheduled push notification stored.");
+        }
+
+        String resolvedMessage = TemplateUtil.resolveTemplateWithParams(template.getContent(), requestDTO.getCustomParams());
+
+        template.setContent(resolvedMessage);
+        NotificationPayloadDTO payload = new NotificationPayloadDTO();
+        payload.setTo(requestDTO.getTo());
+        payload.setSubject(resolvedMessage);
+        payload.setSnapshotConfig(config);
+        payload.setSnapshotTemplate(template);
+
+        String jsonPayload = JsonUtil.toJsonWithJavaTime(payload);
+        messageProducer.sendMessage(pushQueueName, jsonPayload, false);
+
+        return ResponseEntity.ok("✅ Push notification request queued successfully.");
     }
 
 }
