@@ -769,11 +769,326 @@ curl -X POST http://localhost:8112/api/config/send-voice \
 ```
 ```
 
----
+
+# 📡 Webhook Notification Service - Usage Guide
+
+This guide explains how to send notifications via **HTTP Webhooks** using dynamic templates.
 
 ---
 
-For any questions, contact the system maintainer. 🛠️
+## 1️⃣ Save Webhook Template (JSON Payload)
+
+```bash
+curl -X POST http://localhost:8112/api/template/save \
+  -H "Content-Type: application/json" \
+  -d '{
+        "templateName": "Order Webhook Notification",
+        "content": "{\"message\": \"Hello {{customerName}}, your order {{orderId}} totaling ${{amount}} has been placed.\"}",
+        "createdBy": "vishal.gupta",
+        "createdAt": "2025-04-08T12:00:00"
+      }'
+```
+
+---
+
+## 2️⃣ Get All Templates
+
+```bash
+curl -X GET http://localhost:8112/api/template/all
+```
+
+---
+
+## 3️⃣ Save Webhook Notification Config
+
+```bash
+curl -X POST http://localhost:8112/api/config \
+  -H "Content-Type: application/json" \
+  -d '{
+        "clientName": "http-webhook-client",
+        "channel": "webhook",
+        "provider": "http",
+        "config": {
+          "provider": "http"
+        },
+        "fallbackConfigId": null,
+        "isActive": true
+      }'
+```
+
+---
+
+## 4️⃣ Get All Notification Configs
+
+```bash
+curl -X GET http://localhost:8112/api/config/all
+```
+
+---
+
+## 5️⃣ Send Webhook Notification
+
+```bash
+curl -X POST http://localhost:8112/api/config/send-webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+        "notificationConfigId": "REPLACE_WITH_CONFIG_ID",
+        "templateId": "REPLACE_WITH_TEMPLATE_ID",
+        "to": "https://webhook.site/your-custom-url",
+        "customParams": {
+          "customerName": "Vishal Gupta",
+          "orderId": "ORD-98765",
+          "amount": "250"
+        },
+        "scheduled": false
+      }'
+```
+
+---
+
+## 🧠 Notes
+
+- Template content must be in **raw JSON** format.
+- Use `{{key}}` syntax in your template to inject values from `customParams`.
+- `to` should be a valid HTTP/HTTPS URL.
+- Webhooks are delivered via HTTP `POST` requests.
+- Fallback logic is supported using `fallbackConfigId` or `privacyFallbackConfig`.
+- Failed requests will be logged and can be retried automatically (if retry logic is configured).
+
+---
+
+## ✅ Sample Resolved JSON Payload
+
+```json
+{
+  "message": "Hello Vishal Gupta, your order ORD-98765 totaling $250 has been placed."
+}
+```
+
+# 📨 Queue Notification Service – Usage Guide (Kafka / ActiveMQ)
+
+This guide helps you publish messages to a Kafka topic or ActiveMQ queue dynamically using templates and configurable producers.
+
+---
+
+## 1️⃣ Save Queue Template (Text/JSON/XML etc.)
+
+```bash
+curl -X POST http://localhost:8112/api/template/save \
+  -H "Content-Type: application/json" \
+  -d '{
+        "templateName": "Order Dispatched Notification",
+        "content": "{ \"message\": \"Hello {{customerName}}, your order {{orderId}} has been dispatched.\" }",
+        "createdBy": "vishal.gupta",
+        "createdAt": "2025-04-08T14:00:00"
+      }'
+```
+
+---
+
+## 2️⃣ Get All Templates
+
+```bash
+curl -X GET http://localhost:8112/api/template/all
+```
+
+---
+
+## 3️⃣ Save Kafka Notification Config
+
+```bash
+curl -X POST http://localhost:8112/api/config \
+  -H "Content-Type: application/json" \
+  -d '{
+        "clientName": "kafka-publisher-client",
+        "channel": "kafka",
+        "provider": "kafka",
+        "config": {
+          "bootstrapServers": "localhost:9092",
+          "clientId": "order-publisher",
+          "acks": "1",
+          "key.serializer": "org.apache.kafka.common.serialization.StringSerializer",
+          "value.serializer": "org.apache.kafka.common.serialization.StringSerializer"
+        },
+        "isActive": true
+      }'
+```
+
+---
+
+## 4️⃣ Save ActiveMQ Notification Config
+
+```bash
+curl -X POST http://localhost:8112/api/config \
+  -H "Content-Type: application/json" \
+  -d '{
+        "clientName": "activemq-publisher-client",
+        "channel": "activemq",
+        "provider": "activemq",
+        "config": {
+          "brokerUrl": "tcp://localhost:61616",
+          "username": "admin",
+          "password": "admin",
+          "isTopic": false,
+          "deliveryMode": "PERSISTENT"
+        },
+        "isActive": true
+      }'
+```
+
+---
+
+## 5️⃣ Get All Notification Configs
+
+```bash
+curl -X GET http://localhost:8112/api/config/all
+```
+
+---
+
+## 6️⃣ Send Message to Kafka Topic or ActiveMQ Queue
+
+```bash
+curl -X POST http://localhost:8112/api/config/send-queue \
+  -H "Content-Type: application/json" \
+  -d '{
+        "notificationConfigId": "REPLACE_WITH_CONFIG_ID",
+        "templateId": "REPLACE_WITH_TEMPLATE_ID",
+        "to": "order-updates-topic-or-queue-name",
+        "customParams": {
+          "customerName": "Vishal Gupta",
+          "orderId": "ORD-56789"
+        },
+        "scheduled": false
+      }'
+```
+
+---
+
+## 🧠 Notes
+
+- `channel` should be either `kafka` or `activemq`.
+- The value in `.to` should be the **Kafka topic** or **ActiveMQ queue/topic name**.
+- `customParams` will dynamically replace `{{}}` placeholders inside the template.
+- You can configure **key/value serializers**, **delivery mode**, **topic vs queue**, etc., via `NotificationConfig.config`.
+- Use `scheduled: true` to queue the request for future execution (based on cron).
+- Message is published using your dynamic `MessagePublisherFactory`.
+
+---
+
+## ✅ Sample Rendered Output for Kafka / Queue
+
+```json
+{
+  "message": "Hello Vishal Gupta, your order ORD-56789 has been dispatched."
+}
+```
+
+
+# 📐 Unified Notification Platform - High-Level Architecture
+
+This architecture supports the following channels:
+- ✉️ Email
+- 📲 SMS
+- 💬 WhatsApp
+- 🔔 Push Notifications
+- 📞 Voice Calls
+- 🌐 Webhooks
+
+---
+
+## 🔧 Component Flow
+
+```text
++----------------------+     +-------------------------+
+|  ⌨️ REST Controller   |<--->|  Notification API Layer |
++----------------------+     +-------------------------+
+            |                            |
+            v                            v
+  +----------------------+     +----------------------------+
+  | 🧠 Template Resolution |<--->| NotificationRequestDTO     |
+  | & Param Substitution  |     | (to, templateId, params)   |
+  +----------------------+     +----------------------------+
+            |                            |
+            v                            v
+  +----------------------------+        |
+  | Snapshot Payload Builder   |--------+
+  +----------------------------+
+            |
+            v
+  +----------------------------+
+  | Kafka / ActiveMQ Queues   |
+  | (queueName, snapshot)     |
+  +----------------------------+
+            |
+            v
+  +----------------------------+
+  | 🛰️ Consumers (Kafka/AMQ)    |
+  | per channel (email, sms...)|
+  +----------------------------+
+            |
+            v
+  +----------------------------+
+  | ThreadPoolExecutor         |
+  +----------------------------+
+            |
+            v
+  +----------------------------+
+  | Channel SendService        |
+  +----------------------------+
+            |
+            v
++-----------------------------+
+| - EmailSendService         |
+| - SmsSendService           |
+| - WhatsAppSendService      |
+| - PushNotificationService  |
+| - VoiceCallService         |
+| - WebhookSendService       |
++-----------------------------+
+            |
+            v
+  +-----------------------------+
+  | 🪂 Fallback & Retry         |
+  | fallbackConfigId           |
+  | privacyFallbackConfig      |
+  +-----------------------------+
+            |
+            v
+  +-----------------------------+
+  | 📊 RateLimiterService       |
+  | (Per channel, per minute)   |
+  +-----------------------------+
+```
+
+Data Store:
+----------------
+- MongoDB:
+  - `NotificationConfig`
+  - `TemplateEntity`
+  - `ScheduledNotification`
+  - `FcmTokenEntity`
+  - `FailedXLog` (for all channels)
+
+Optional External Services:
+---------------------------
+- ✉️ SMTP (Email)
+- 📞 Twilio (SMS/Voice/WhatsApp)
+- 🔔 Firebase (Push)
+- 🌐 Webhook POST Endpoint
+- ☁️ FileStorage CDN (for large HTML/TwiML)
+
+✅ Features Supported
+---------------------------
+- 💌 Multi-channel support (Email, SMS, WhatsApp, Push, Voice, Webhook)
+- 📋 Templated content with dynamic params ({{key}})
+- 📦 Queue-based architecture (Kafka/ActiveMQ)
+- ⏱️ Scheduling via CRON & persistence
+- ♻️ Fallback strategies (both config & privacy config)
+- ⚙️ Rate Limiting (configurable per channel)
+- 📁 CDN storage fallback (for large template payloads)
+
+---
 
 ## 📄 License
 

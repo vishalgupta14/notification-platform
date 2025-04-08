@@ -11,6 +11,7 @@
     <file url="file://$PROJECT_DIR$/message-sender-service/src/main/resources" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/notification-common/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/notification-common/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/scheduler-service/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/src/main/resources" charset="UTF-8" />
   </component>

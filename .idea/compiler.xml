@@ -7,6 +7,7 @@
         <sourceOutputDir name="target/generated-sources/annotations" />
         <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
         <outputRelativeToContentRoot value="true" />
+        <module name="scheduler-service" />
         <module name="cdn-server" />
         <module name="message-sender-service" />
         <module name="message-node-executor" />
@@ -35,6 +36,7 @@
       <module name="email-sender-service" options="" />
       <module name="message-node-executor" options="-parameters" />
       <module name="notification-common" options="-parameters" />
+      <module name="scheduler-service" options="-parameters" />
     </option>
   </component>
 </project>

@@ -17,14 +17,15 @@ public class ScheduledNotification {
     @Id
     private String id;
 
-    private String notificationConfigId;
-    private String templateId;
+    private NotificationConfig notificationConfig;
+    private TemplateEntity template;
     private String to;
     private List<String> cc;
     private List<String> bcc;
     private String emailSubject;
     private Map<String, Object> customParams;
-
+    private String queueName;
     private String scheduleCron;
+    private String timeZone;
     private boolean active;
 }

@@ -15,6 +15,7 @@
         <module>notification-common</module>
         <module>message-node-executor</module>
         <module>message-sender-service</module>
+        <module>scheduler-service</module>
     </modules>
 
     <properties>

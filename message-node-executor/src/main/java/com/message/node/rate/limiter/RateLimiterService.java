@@ -3,11 +3,13 @@ package com.message.node.rate.limiter;
 import io.github.resilience4j.ratelimiter.RateLimiter;
 import io.github.resilience4j.ratelimiter.RateLimiterConfig;
 import io.github.resilience4j.ratelimiter.RateLimiterRegistry;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
@@ -34,6 +36,12 @@ public class RateLimiterService {
     @Value("${ratelimiter.voice.limit:20}")
     private int voiceLimit;
 
+    @Value("${ratelimiter.webhook.limit:25}")
+    private int webhookLimit;
+
+    @Value("${ratelimiter.publish.limit:100}")
+    private int publishLimit;
+
     @Value("${email.queue.name:email-queue}")
     private String emailQueue;
 
@@ -49,17 +57,34 @@ public class RateLimiterService {
     @Value("${voice.queue.name:voice-notification-queue}")
     private String voiceQueue;
 
-    public boolean isAllowed(String queueName) {
-        if (!isRateLimiterEnabled) {
-            return true;
-        }
+    @Value("${webhook.queue.name:webhook-queue}")
+    private String webhookQueue;
 
-        RateLimiter limiter = limiters.computeIfAbsent(queueName, this::createRateLimiter);
+    @Value("${publish.queue.name:publish-queue}")
+    private String publishQueue;
+
+    private final Map<String, Integer> queueLimitMap = new ConcurrentHashMap<>();
+
+    @PostConstruct
+    public void initLimits() {
+        queueLimitMap.put(emailQueue, emailLimit);
+        queueLimitMap.put(smsQueue, smsLimit);
+        queueLimitMap.put(whatsappQueue, whatsappLimit);
+        queueLimitMap.put(pushQueue, pushLimit);
+        queueLimitMap.put(voiceQueue, voiceLimit);
+        queueLimitMap.put(webhookQueue, webhookLimit);
+        queueLimitMap.put(publishQueue, publishLimit);
+    }
+
+    public boolean isAllowed(String queueName) {
+        if (!isRateLimiterEnabled) return true;
+
+        var limiter = limiters.computeIfAbsent(queueName, this::createRateLimiter);
         return limiter.acquirePermission();
     }
 
     private RateLimiter createRateLimiter(String queueName) {
-        int limit = resolveLimit(queueName);
+        int limit = queueLimitMap.getOrDefault(queueName, 60);
 
         RateLimiterConfig config = RateLimiterConfig.custom()
                 .limitForPeriod(limit)
@@ -68,14 +93,5 @@ public class RateLimiterService {
                 .build();
 
         return RateLimiterRegistry.of(config).rateLimiter(queueName);
-    }
-
-    private int resolveLimit(String queueName) {
-        if (queueName.equals(emailQueue)) return emailLimit;
-        if (queueName.equals(smsQueue)) return smsLimit;
-        if (queueName.equals(whatsappQueue)) return whatsappLimit;
-        if (queueName.equals(pushQueue)) return pushLimit;
-        if (queueName.equals(voiceQueue)) return voiceLimit;
-        return 60;
     }
 }

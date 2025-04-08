@@ -73,6 +73,13 @@ public class NotificationConfigController {
     @Value("${voice.queue.name}")
     private String voiceQueueName;
 
+    @Value("${webhook.queue.name}")
+    private String webhookQueueName;
+
+    @Value("${publish.queue.name}")
+    private String publishQueueName;
+
+
     public NotificationConfigController(NotificationConfigService configService, MessageProducer messageProducer, TemplateService templateService, ScheduledNotificationService scheduledNotificationService, HtmlCdnUploader htmlCdnUploader, RateLimiterService rateLimiterService) {
         this.configService = configService;
         this.messageProducer = messageProducer;
@@ -160,13 +167,14 @@ public class NotificationConfigController {
 
         if (requestDTO.isScheduled()) {
                 ScheduledNotification scheduled = ScheduledNotification.builder()
-                        .notificationConfigId(requestDTO.getNotificationConfigId())
-                        .templateId(requestDTO.getTemplateId())
+                        .notificationConfig(config)
+                        .template(template)
                         .to(requestDTO.getTo())
                         .cc(requestDTO.getCc())
                         .bcc(requestDTO.getBcc())
                         .emailSubject(requestDTO.getEmailSubject())
                         .customParams(requestDTO.getCustomParams())
+                        .queueName(emailQueueName)
                         .scheduleCron(requestDTO.getScheduleCron())
                         .active(true)
                         .build();
@@ -233,11 +241,12 @@ public class NotificationConfigController {
 
         if (requestDTO.isScheduled()) {
             ScheduledNotification scheduled = ScheduledNotification.builder()
-                    .notificationConfigId(requestDTO.getNotificationConfigId())
-                    .templateId(requestDTO.getTemplateId())
+                    .notificationConfig(config)
+                    .template(template)
                     .to(requestDTO.getTo())
                     .emailSubject(requestDTO.getEmailSubject())
                     .customParams(requestDTO.getCustomParams())
+                    .queueName(smsQueueName)
                     .scheduleCron(requestDTO.getScheduleCron())
                     .active(true)
                     .build();
@@ -281,11 +290,12 @@ public class NotificationConfigController {
 
         if (requestDTO.isScheduled()) {
             ScheduledNotification scheduled = ScheduledNotification.builder()
-                    .notificationConfigId(requestDTO.getNotificationConfigId())
-                    .templateId(requestDTO.getTemplateId())
+                    .notificationConfig(config)
+                    .template(template)
                     .to(requestDTO.getTo())
                     .emailSubject(null)
                     .customParams(requestDTO.getCustomParams())
+                    .queueName(whatsappQueueName)
                     .scheduleCron(requestDTO.getScheduleCron())
                     .active(true)
                     .build();
@@ -345,11 +355,12 @@ public class NotificationConfigController {
 
         if (requestDTO.isScheduled()) {
             ScheduledNotification scheduled = ScheduledNotification.builder()
-                    .notificationConfigId(requestDTO.getNotificationConfigId())
-                    .templateId(requestDTO.getTemplateId())
+                    .notificationConfig(config)
+                    .template(template)
                     .to(requestDTO.getTo())
                     .emailSubject(null)
                     .customParams(requestDTO.getCustomParams())
+                    .queueName(pushQueueName)
                     .scheduleCron(requestDTO.getScheduleCron())
                     .active(true)
                     .build();
@@ -396,10 +407,11 @@ public class NotificationConfigController {
 
         if (requestDTO.isScheduled()) {
             ScheduledNotification scheduled = ScheduledNotification.builder()
-                    .notificationConfigId(requestDTO.getNotificationConfigId())
-                    .templateId(requestDTO.getTemplateId())
+                    .notificationConfig(config)
+                    .template(template)
                     .to(requestDTO.getTo())
                     .customParams(requestDTO.getCustomParams())
+                    .queueName(voiceQueueName)
                     .scheduleCron(requestDTO.getScheduleCron())
                     .active(true)
                     .build();
@@ -436,5 +448,122 @@ public class NotificationConfigController {
         return ResponseEntity.ok("✅ Voice call request processed successfully.");
     }
 
+    @PostMapping("/send-webhook")
+    public ResponseEntity<String> sendWebhook(@Valid @RequestBody NotificationRequestDTO requestDTO) {
+        log.info("🌐 Webhook request received: configId={}, templateId={}",
+                requestDTO.getNotificationConfigId(), requestDTO.getTemplateId());
+
+        NotificationConfig config = configService.findById(requestDTO.getNotificationConfigId());
+        if (config == null || !config.isActive()) {
+            return ResponseEntity.badRequest().body("❌ Invalid or inactive NotificationConfig ID");
+        }
+
+        TemplateEntity template = templateService.getTemplateById(requestDTO.getTemplateId()).orElse(null);
+        if (template == null) {
+            return ResponseEntity.badRequest().body("❌ Invalid Template ID");
+        }
+
+        if (requestDTO.isScheduled()) {
+            ScheduledNotification scheduled = ScheduledNotification.builder()
+                    .notificationConfig(config)
+                    .template(template)
+                    .to(requestDTO.getTo())
+                    .customParams(requestDTO.getCustomParams())
+                    .queueName(webhookQueueName)
+                    .scheduleCron(requestDTO.getScheduleCron())
+                    .active(true)
+                    .build();
+            scheduledNotificationService.saveScheduledNotification(scheduled);
+            return ResponseEntity.ok("✅ Scheduled voice call stored.");
+        }
+
+        String resolvedJson = TemplateUtil.resolveTemplateWithParams(template.getContent(), requestDTO.getCustomParams());
+        template.setContent(resolvedJson);
+        NotificationPayloadDTO payload = new NotificationPayloadDTO();
+        payload.setTo(requestDTO.getTo());
+        payload.setSubject(null);
+        payload.setSnapshotConfig(config);
+        payload.setSnapshotTemplate(template);
+
+        String jsonPayload = JsonUtil.toJsonWithJavaTime(payload);
+        messageProducer.sendMessage(webhookQueueName, jsonPayload, false);
+
+        return ResponseEntity.ok("✅ Webhook queued successfully.");
+    }
+
+    @PostMapping("/send-queue")
+    public ResponseEntity<String> sendToQueue(@Valid @RequestBody NotificationRequestDTO requestDTO) {
+        log.info("📤 Received send-queue request with configId={}, templateId={}, queue={}",
+                requestDTO.getNotificationConfigId(), requestDTO.getTemplateId(), requestDTO.getTo());
+
+        if (!rateLimiterService.isAllowed(publishQueueName)) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .body("🚫 Rate limit exceeded for queue: " + publishQueueName);
+        }
+
+        NotificationConfig config = configService.findById(requestDTO.getNotificationConfigId());
+        if (config == null || !config.isActive()) {
+            return ResponseEntity.badRequest().body("❌ Invalid or inactive NotificationConfig ID");
+        }
+
+        TemplateEntity template = templateService.getTemplateById(requestDTO.getTemplateId()).orElse(null);
+        if (template == null) {
+            return ResponseEntity.badRequest().body("❌ Invalid Template ID: Not found");
+        }
+
+        if (requestDTO.isScheduled()) {
+            ScheduledNotification scheduled = ScheduledNotification.builder()
+                    .notificationConfig(config)
+                    .template(template)
+                    .to(requestDTO.getTo())
+                    .cc(requestDTO.getCc())
+                    .bcc(requestDTO.getBcc())
+                    .emailSubject(requestDTO.getEmailSubject())
+                    .customParams(requestDTO.getCustomParams())
+                    .queueName(publishQueueName)
+                    .scheduleCron(requestDTO.getScheduleCron())
+                    .active(true)
+                    .build();
+
+            scheduledNotificationService.saveScheduledNotification(scheduled);
+            return ResponseEntity.ok("✅ Scheduled notification saved for future dispatch.");
+        }
+
+        try {
+            // Resolve template content
+            int maxInlineChars = maxInlineKb * 1024;
+            String resolvedHtml = TemplateUtil.resolveTemplateWithParams(template.getContent(), requestDTO.getCustomParams());
+
+            if (resolvedHtml != null && resolvedHtml.length() > maxInlineChars) {
+                String cdnUrl = htmlCdnUploader.uploadHtmlAsFile(resolvedHtml);
+                template.setCdnUrl(cdnUrl);
+                template.setContent(null);
+            } else {
+                template.setContent(resolvedHtml);
+            }
+
+            String resolvedSubject = TemplateUtil.resolveTemplateWithParams(
+                    StringUtils.defaultIfBlank(requestDTO.getEmailSubject(), template.getEmailSubject()),
+                    requestDTO.getCustomParams());
+
+            NotificationPayloadDTO payload = new NotificationPayloadDTO();
+            payload.setTo(requestDTO.getTo());
+            payload.setCc(requestDTO.getCc());
+            payload.setBcc(requestDTO.getBcc());
+            payload.setSubject(resolvedSubject);
+            payload.setSnapshotConfig(config);
+            payload.setSnapshotTemplate(template);
+
+            String jsonPayload = JsonUtil.toJsonWithJavaTime(payload);
+
+            messageProducer.sendMessage(publishQueueName, jsonPayload, false);
+
+        } catch (Exception e) {
+            log.error("❌ Failed to process and send message", e);
+            return ResponseEntity.internalServerError().body("❌ Notification failed: " + e.getMessage());
+        }
+
+        return ResponseEntity.ok("✅ Message published to queue: " + requestDTO.getTo());
+    }
 
 }
