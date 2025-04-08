@@ -81,8 +81,6 @@ temp/
 secrets/
 config/private/
 
-UploadFile/*.*
-uploads/cdn/*.*
 
 .mvn/*.*
 .idea/*.*
