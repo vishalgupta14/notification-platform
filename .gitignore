@@ -81,7 +81,11 @@ temp/
 secrets/
 config/private/
 
+UploadFile/*.*
+uploads/cdn/*.*
 
 .mvn/*.*
 .idea/*.*
 target/*.*
+
+scheduler-service/.mvn
