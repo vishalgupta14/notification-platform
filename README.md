@@ -596,21 +596,21 @@ curl -X POST http://localhost:8112/api/config \
         "config": {
           "firebaseJson": {
             "project_info": {
-              "project_number": "981287745460",
-              "project_id": "notification-platform-22f81",
-              "storage_bucket": "notification-platform-22f81.firebasestorage.app"
+              "project_number": "",
+              "project_id": "",
+              "storage_bucket": ""
             },
             "client": [
               {
                 "client_info": {
-                  "mobilesdk_app_id": "1:981287745460:android:b86b8579d0db92ba7724e1",
+                  "mobilesdk_app_id": "",
                   "android_client_info": {
-                    "package_name": "com.message.engine"
+                    "package_name": ""
                   }
                 },
                 "api_key": [
                   {
-                    "current_key": "AIzaSyDUDOa2rU1TqfO9GftdU8Y83IFArDg5iuw"
+                    "current_key": ""
                   }
                 ],
                 "services": {
