@@ -25,13 +25,13 @@ public class ArtemisEvictionListener {
         this.fileStorageConfigCacheEvictionService = fileStorageConfigCacheEvictionService;
     }
 
-    @JmsListener(destination = "${email.cache.eviction}", containerFactory = "topicListenerFactory")
+    @JmsListener(destination = "${email.cache.eviction}", containerFactory = "topicListenerFactory",  subscription = "#{T(java.util.UUID).randomUUID().toString()}")
     public void listenEmailCacheEviction(String message) {
         log.info("[Artemis] [Eviction Queue] Consumed email cache message: {}", message);
         evictionService.handleMessage(message);
     }
 
-    @JmsListener(destination = "${storage.cache.eviction}", containerFactory = "topicListenerFactory")
+    @JmsListener(destination = "${storage.cache.eviction}", containerFactory = "topicListenerFactory",  subscription = "#{T(java.util.UUID).randomUUID().toString()}")
     public void listenStorageCacheEviction(String message) {
         log.info("[Artemis] [Eviction Queue] Consumed storage cache message: {}", message);
         fileStorageConfigCacheEvictionService.handleMessage(message);
