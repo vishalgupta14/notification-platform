@@ -7,16 +7,21 @@ import com.notification.common.repository.ScheduledNotificationRepository;
 import com.notification.common.utils.JsonUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.mongodb.core.FindAndModifyOptions;
+import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
-import java.util.List;
 import java.util.Optional;
-
-import org.springframework.scheduling.support.CronExpression;
 
 @Slf4j
 @Service
@@ -24,66 +29,118 @@ import org.springframework.scheduling.support.CronExpression;
 public class ScheduledNotificationService {
 
     private final ScheduledNotificationRepository scheduledRepo;
+    private final ReactiveMongoTemplate mongoTemplate;
     private final MessageProducer messageProducer;
+
+    private static final String INSTANCE_ID = System.getenv().getOrDefault("INSTANCE_ID", "scheduler-instance-1");
+    private static final int MAX_RETRIES = 3;
 
     @Scheduled(fixedRateString = "${notification.scheduler.fixedRate.ms}")
     public void processScheduledNotifications() {
-        LocalDateTime now = LocalDateTime.now();
-        log.info("⏰ Scheduler triggered at: {}", now);
+        log.info("⏰ Scheduler triggered at: {}", LocalDateTime.now());
 
-        List<ScheduledNotification> dueNotifications = scheduledRepo.findByActiveTrue();
-        log.info("🔍 Found {} active scheduled notifications to evaluate", dueNotifications.size());
+        Mono.defer(this::findAndLockNextJob)
+                .repeat(5)
+                .flatMap(this::processJobSafely)
+                .doOnError(e -> log.error("❌ Unexpected error during scheduling run: {}", e.getMessage(), e))
+                .doOnComplete(() -> log.info("✅ Scheduler run completed at: {}", LocalDateTime.now()))
+                .subscribe();
+    }
 
-        for (ScheduledNotification scheduled : dueNotifications) {
-            try {
-                log.debug("🔎 Checking scheduled ID: {}, Cron: {}", scheduled.getId(), scheduled.getScheduleCron());
+    private Mono<ScheduledNotification> findAndLockNextJob() {
+        Query query = new Query(new Criteria().orOperator(
+                Criteria.where("status").is("NEW"),
+                Criteria.where("status").is("PICKED")
+                        .and("pickedAt").lt(LocalDateTime.now().minusMinutes(2)) // stale lock
+        ).and("active").is(true));
 
-                if (isCronDueNow(scheduled)) {
-                    log.info("✅ Matched cron for scheduled ID: {}, Queue: {}", scheduled.getId(), scheduled.getQueueName());
-                    publishToQueue(scheduled);
+        Update update = new Update()
+                .set("status", "PICKED")
+                .set("pickedAt", LocalDateTime.now())
+                .set("pickedBy", INSTANCE_ID);
 
-                    if (isOneTimeJob(scheduled)) {
-                        scheduledRepo.deleteById(scheduled.getId());
-                        log.info("🗑️ One-time scheduled notification deleted: {}", scheduled.getId());
-                    }
-                } else {
-                    log.debug("⏭️ Not due yet for scheduled ID: {}", scheduled.getId());
-                }
+        FindAndModifyOptions options = FindAndModifyOptions.options().returnNew(true);
 
-            } catch (Exception e) {
-                log.error("⚠️ Error processing scheduled notification ID {}: {}", scheduled.getId(), e.getMessage(), e);
-            }
+        return mongoTemplate.findAndModify(query, update, options, ScheduledNotification.class)
+                .filter(scheduled -> scheduled != null);
+    }
+
+    private Mono<Boolean> processJobSafely(ScheduledNotification scheduled) {
+        log.debug("🔎 Processing scheduled ID: {} with cron: {}", scheduled.getId(), scheduled.getScheduleCron());
+
+        if (!isCronDueNow(scheduled)) {
+            return unlockJob(scheduled);
         }
 
-        log.info("✅ Scheduler cycle completed at: {}", LocalDateTime.now());
+        try {
+            publishToQueue(scheduled);
+        } catch (Exception e) {
+            log.error("❌ Failed to publish to queue for ID {}: {}", scheduled.getId(), e.getMessage(), e);
+            return handleFailure(scheduled);
+        }
+
+        if (isOneTimeJob(scheduled)) {
+            return scheduledRepo.deleteById(scheduled.getId())
+                    .doOnSuccess(v -> log.info("🗑️ One-time job deleted: {}", scheduled.getId()))
+                    .thenReturn(true);
+        } else {
+            scheduled.setStatus("COMPLETED");
+            return scheduledRepo.save(scheduled).thenReturn(true);
+        }
+    }
+
+    private Mono<Boolean> unlockJob(ScheduledNotification scheduled) {
+        scheduled.setStatus("NEW");
+        scheduled.setPickedBy(null);
+        scheduled.setPickedAt(null);
+        return scheduledRepo.save(scheduled).thenReturn(false);
+    }
+
+    private Mono<Boolean> handleFailure(ScheduledNotification scheduled) {
+        int retry = scheduled.getRetryCount() + 1;
+        scheduled.setRetryCount(retry);
+        if (retry >= MAX_RETRIES) {
+            scheduled.setStatus("FAILED");
+        } else {
+            scheduled.setStatus("NEW");
+        }
+        return scheduledRepo.save(scheduled).thenReturn(false);
+    }
+
+    private boolean isCronDueNow(ScheduledNotification scheduled) {
+        try {
+            CronExpression cron = CronExpression.parse(scheduled.getScheduleCron());
+            ZoneId zoneId = ZoneId.of(Optional.ofNullable(scheduled.getTimeZone()).orElse(ZoneId.systemDefault().getId()));
+            ZonedDateTime now = ZonedDateTime.now(zoneId);
+            ZonedDateTime windowStart = now.minusSeconds(30);
+            ZonedDateTime windowEnd = now.plusSeconds(30);
+
+            ZonedDateTime next = cron.next(windowStart);
+            return next != null && !next.isAfter(windowEnd);
+        } catch (Exception e) {
+            log.error("❌ Cron parsing error for scheduled ID {}: {}", scheduled.getId(), e.getMessage(), e);
+            return false;
+        }
     }
 
     private boolean isOneTimeJob(ScheduledNotification scheduled) {
         try {
             CronExpression cron = CronExpression.parse(scheduled.getScheduleCron());
-            String zoneIdStr = Optional.ofNullable(scheduled.getTimeZone()).orElse(ZoneId.systemDefault().getId());
-            ZoneId zoneId = ZoneId.of(zoneIdStr);
-
+            ZoneId zoneId = ZoneId.of(Optional.ofNullable(scheduled.getTimeZone()).orElse(ZoneId.systemDefault().getId()));
             ZonedDateTime now = ZonedDateTime.now(zoneId);
+
             ZonedDateTime next = cron.next(now);
-            if (next == null) {
-                return true; // No future runs → one-time cron
-            }
+            if (next == null) return true;
 
-            // Optional: Add tolerance if it's near expiration
-            ZonedDateTime nextAfter = cron.next(next);
-            return nextAfter == null;
-
+            ZonedDateTime afterNext = cron.next(next);
+            return afterNext == null;
         } catch (Exception e) {
-            log.warn("⚠️ Failed to evaluate if cron is one-time. Treating as recurring. {}", e.getMessage());
+            log.warn("⚠️ Could not determine if job is one-time for ID {}. {}", scheduled.getId(), e.getMessage());
             return false;
         }
     }
 
     private void publishToQueue(ScheduledNotification scheduled) {
-        String queueName = scheduled.getQueueName();
-
-
         NotificationPayloadDTO payload = new NotificationPayloadDTO();
         payload.setTo(scheduled.getTo());
         payload.setCc(scheduled.getCc());
@@ -92,30 +149,10 @@ public class ScheduledNotificationService {
         payload.setSnapshotConfig(scheduled.getNotificationConfig());
         payload.setSnapshotTemplate(scheduled.getTemplate());
 
+        String queue = scheduled.getQueueName();
         String jsonPayload = JsonUtil.toJsonWithJavaTime(payload);
-        messageProducer.sendMessage(queueName, jsonPayload, false);
 
-        log.info("📤 Scheduled message sent to queue: {}", queueName);
+        messageProducer.sendMessage(queue, jsonPayload, false);
+        log.info("📤 Published message to queue [{}] for scheduled ID: {}", queue, scheduled.getId());
     }
-
-    private boolean isCronDueNow(ScheduledNotification scheduled) {
-        try {
-            CronExpression cron = CronExpression.parse(scheduled.getScheduleCron());
-
-            String zoneIdStr = Optional.ofNullable(scheduled.getTimeZone()).orElse(ZoneId.systemDefault().getId());
-            ZoneId zoneId = ZoneId.of(zoneIdStr);
-
-            ZonedDateTime now = LocalDateTime.now().atZone(zoneId);
-            ZonedDateTime start = now.minusSeconds(30);
-            ZonedDateTime end = now.plusSeconds(30);
-
-            ZonedDateTime next = cron.next(start);
-            return next != null && !next.isAfter(end);
-
-        } catch (Exception e) {
-            log.error("❌ Error parsing cron or zone for scheduled notification: {}", e.getMessage(), e);
-            return false;
-        }
-    }
-
 }

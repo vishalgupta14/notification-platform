@@ -7,15 +7,13 @@ import org.springframework.context.annotation.ComponentScan;
 import org.springframework.data.mongodb.repository.config.EnableMongoRepositories;
 
 @SpringBootApplication
-@EnableMongoRepositories(basePackages = "com.notification.common.repository")
 @ComponentScan(basePackages = {
-		"com.notification.common.service",
+		"com.notification.common",
 		"com.message.node"
 })
 public class MessageNodeExecutorApplication {
-
 	public static void main(String[] args) {
 		SpringApplication.run(MessageNodeExecutorApplication.class, args);
 	}
-
 }
+

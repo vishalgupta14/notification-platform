@@ -2,8 +2,13 @@ package com.notification.common.repository;
 
 import com.notification.common.model.TemplateEntity;
 import org.springframework.data.mongodb.repository.MongoRepository;
+import org.springframework.data.mongodb.repository.ReactiveMongoRepository;
 
-public interface TemplateRepository extends MongoRepository<TemplateEntity, String> {
+import reactor.core.publisher.Mono;
 
-    boolean existsByTemplateName(String templateName);
+
+
+public interface TemplateRepository extends ReactiveMongoRepository<TemplateEntity, String> {
+
+    Mono<Boolean> existsByTemplateName(String templateName);
 }

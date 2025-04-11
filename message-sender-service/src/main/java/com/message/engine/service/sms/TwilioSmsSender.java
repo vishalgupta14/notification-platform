@@ -4,6 +4,8 @@ import com.twilio.Twilio;
 import com.twilio.rest.api.v2010.account.Message;
 import com.twilio.type.PhoneNumber;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.util.Map;
 
@@ -11,12 +13,14 @@ import java.util.Map;
 public class TwilioSmsSender implements SmsSender {
 
     @Override
-    public void sendSms(Map<String, Object> config, String to, String message) {
-        String sid = config.get("accountSid").toString();
-        String token = config.get("authToken").toString();
-        String from = config.get("from").toString();
+    public Mono<Void> sendSms(Map<String, Object> config, String to, String message) {
+        return Mono.fromRunnable(() -> {
+            String sid = config.get("accountSid").toString();
+            String token = config.get("authToken").toString();
+            String from = config.get("from").toString();
 
-        Twilio.init(sid, token);
-        Message.creator(new PhoneNumber(to), new PhoneNumber(from), message).create();
+            Twilio.init(sid, token);
+            Message.creator(new PhoneNumber(to), new PhoneNumber(from), message).create();
+        }).subscribeOn(Schedulers.boundedElastic()).then();
     }
 }

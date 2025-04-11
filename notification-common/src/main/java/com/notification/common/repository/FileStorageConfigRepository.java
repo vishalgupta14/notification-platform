@@ -2,15 +2,21 @@ package com.notification.common.repository;
 
 import com.notification.common.model.FileStorageConfig;
 import org.springframework.data.mongodb.repository.MongoRepository;
+import org.springframework.data.mongodb.repository.ReactiveMongoRepository;
+
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
 import java.util.Optional;
 
-public interface FileStorageConfigRepository extends MongoRepository<FileStorageConfig, String> {
 
-    Optional<FileStorageConfig> findByFileStorageNameAndIsActive(String fileStorageName, boolean isActive);
 
-    boolean existsByFileStorageNameAndIsActive(String fileStorageName, boolean isActive);
+public interface FileStorageConfigRepository extends ReactiveMongoRepository<FileStorageConfig, String> {
 
-    List<FileStorageConfig> findAllByIsActive(boolean isActive); // Optional utility method
+    Mono<FileStorageConfig> findByFileStorageNameAndIsActive(String fileStorageName, boolean isActive);
+
+    Mono<Boolean> existsByFileStorageNameAndIsActive(String fileStorageName, boolean isActive);
+
+    Flux<FileStorageConfig> findAllByIsActive(boolean isActive); // Optional utility method
 }

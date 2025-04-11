@@ -2,6 +2,7 @@ package com.notification.common.dto;
 
 import com.notification.common.model.NotificationConfig;
 import com.notification.common.model.TemplateEntity;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.Setter;
 

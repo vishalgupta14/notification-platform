@@ -2,18 +2,20 @@ package com.notification.common.model;
 
 import lombok.*;
 import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.index.CompoundIndex;
 import org.springframework.data.mongodb.core.mapping.Document;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
+@Document(collection = "scheduled_notifications")
+@CompoundIndex(name = "status_active_idx", def = "{'status': 1, 'active': 1}")
 @Data
 @Builder
 @AllArgsConstructor
 @NoArgsConstructor
-@Document(collection = "scheduled_notifications")
 public class ScheduledNotification {
-
     @Id
     private String id;
 
@@ -28,4 +30,9 @@ public class ScheduledNotification {
     private String scheduleCron;
     private String timeZone;
     private boolean active;
+
+    private String status; // NEW, PICKED, COMPLETED, FAILED
+    private String pickedBy;
+    private LocalDateTime pickedAt;
+    private int retryCount;
 }

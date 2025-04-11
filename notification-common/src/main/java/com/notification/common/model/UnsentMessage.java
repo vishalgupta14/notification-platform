@@ -24,6 +24,10 @@ public class UnsentMessage {
 
     private LocalDateTime timestamp = LocalDateTime.now();
 
+    private int retryCount = 0;
+    private LocalDateTime nextRetryTime;
+    private String lastError;
+
     public UnsentMessage(String queueName, String message, MessagingMode messagingType) {
         this.queueName = queueName;
         this.message = message;

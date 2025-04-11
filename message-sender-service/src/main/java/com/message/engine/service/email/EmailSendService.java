@@ -1,12 +1,12 @@
 package com.message.engine.service.email;
 
+import com.message.engine.manager.EmailConnectionPoolManager;
+import com.message.engine.manager.FileStorageConnectionPoolManager;
 import com.message.engine.service.FailedAttachmentLogService;
 import com.message.engine.service.FailedEmailLogService;
 import com.message.engine.service.FileStorageConfigService;
 import com.notification.common.dto.CachedStorageClient;
 import com.notification.common.dto.NotificationPayloadDTO;
-import com.message.engine.manager.EmailConnectionPoolManager;
-import com.message.engine.manager.FileStorageConnectionPoolManager;
 import com.notification.common.model.*;
 import com.notification.common.repository.NotificationConfigRepository;
 import com.notification.common.service.upload.FileUploader;
@@ -15,24 +15,23 @@ import jakarta.mail.internet.MimeMessage;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.io.*;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class EmailSendService {
-
-    private static final Logger log = LoggerFactory.getLogger(EmailSendService.class);
 
     private final NotificationConfigRepository notificationConfigRepository;
     private final FileStorageConfigService fileStorageConfigService;
@@ -40,7 +39,6 @@ public class EmailSendService {
     private final FileStorageConnectionPoolManager fileStorageConnectionPoolManager;
     private final FailedEmailLogService failedEmailLogService;
     private final FailedAttachmentLogService failedAttachmentLogService;
-
     private final HtmlCdnUploader htmlCdnUploader;
 
     @Value("${notification.email.enabled:true}")
@@ -49,163 +47,173 @@ public class EmailSendService {
     @Value("${notification.email.allowPartialAttachment:false}")
     private boolean allowPartialAttachment;
 
-    public void sendEmail(NotificationPayloadDTO request) {
-        long startTime = System.currentTimeMillis();
-        String notificationConfigId = request.getSnapshotConfig().getId();
+    public Mono<Void> sendEmail(NotificationPayloadDTO request) {
+        if (!isEmailSendingEnabled) {
+            log.info("[EMAIL-SIMULATION] Email sending is DISABLED via configuration.");
+            return Mono.empty();
+        }
+
         String templateId = request.getSnapshotTemplate().getId();
+        String notificationConfigId = request.getSnapshotConfig().getId();
         String toEmail = request.getTo();
         List<String> cc = request.getCc();
         List<String> bcc = request.getBcc();
         String resolvedSubject = request.getSubject();
-
         TemplateEntity template = request.getSnapshotTemplate();
+
+        return Mono.fromCallable(() -> {
+                    String htmlContent = template.getContent();
+                    if (htmlContent == null && StringUtils.isNotBlank(template.getCdnUrl())) {
+                        htmlContent = htmlCdnUploader.fetchFromCdn(template.getCdnUrl());
+                        htmlCdnUploader.deleteFromCdn(template.getCdnUrl());
+                    }
+                    return new PreparedEmailContent(resolvedSubject, htmlContent, new ArrayList<>());
+                })
+                .flatMap(content -> prepareAttachmentsReactive(template)
+                        .collectList()
+                        .doOnNext(content::setAttachmentFiles)
+                        .onErrorResume(e -> {
+                            log.warn("Attachment error: {}", e.getMessage());
+                            if (!allowPartialAttachment) {
+                                return failedAttachmentLogService.save(FailedAttachmentLog.builder()
+                                                .templateId(templateId)
+                                                .notificationConfigId(notificationConfigId)
+                                                .errorMessage("Attachment download failed: " + e.getMessage())
+                                                .timestamp(System.currentTimeMillis())
+                                                .build())
+                                        .then(Mono.error(new RuntimeException("Attachment preparation failed", e)));
+                            }
+                            return Mono.just(Collections.emptyList());
+                        })
+                        .thenReturn(content)
+                )
+                .flatMap(content -> trySendWithFallbacks(request, content))
+                .subscribeOn(Schedulers.boundedElastic())
+                .then();
+    }
+
+    private Flux<File> prepareAttachmentsReactive(TemplateEntity template) {
+        if (template.getAttachments() == null || template.getAttachments().isEmpty()) {
+            return Flux.empty();
+        }
+
+        return Flux.fromIterable(template.getAttachments())
+                .flatMap(ref -> fileStorageConfigService.getById(ref.getFileStorageId())
+                        .flatMap(fileStorageConnectionPoolManager::getClient)
+                        .flatMapMany(cached -> {
+                            FileUploader uploader = cached.getUploader();
+                            String key = extractKey(ref.getFileUrl());
+
+                            return Mono.fromCallable(() -> {
+                                File tempFile = File.createTempFile("attachment", key);
+                                try (InputStream in = uploader.downloadFile(key, cached.getProperties());
+                                     FileOutputStream out = new FileOutputStream(tempFile)) {
+                                    in.transferTo(out);
+                                }
+                                return tempFile;
+                            }).flux();
+                        })
+                        .onErrorResume(e -> {
+                            log.warn("Attachment skipped due to error: {}", e.getMessage());
+                            return Flux.empty();
+                        })
+                );
+    }
+
+    private Mono<Void> trySendWithFallbacks(NotificationPayloadDTO request, PreparedEmailContent content) {
         NotificationConfig mainConfig = request.getSnapshotConfig();
+        String toEmail = request.getTo();
+        List<String> cc = request.getCc();
+        List<String> bcc = request.getBcc();
 
-        if (!isEmailSendingEnabled) {
-            log.info("[EMAIL-SIMULATION] Email sending is DISABLED via configuration.");
-            return;
-        }
+        return trySend(mainConfig, toEmail, cc, bcc, content)
+                .flatMap(success -> {
+                    if (success) {
+                        return Mono.empty();
+                    } else {
+                        return fallbackSend(mainConfig, toEmail, cc, bcc, content)
+                                .flatMap(fallbackSuccess -> {
+                                    if (fallbackSuccess) {
+                                        return Mono.empty();
+                                    } else {
+                                        return logAndFail(request, content);
+                                    }
+                                });
+                    }
+                });
+    }
 
-        try {
-            String htmlContent = template.getContent();
-            if (htmlContent == null && StringUtils.isNotBlank(template.getCdnUrl())) {
-                htmlContent = htmlCdnUploader.fetchFromCdn(template.getCdnUrl());
-                htmlCdnUploader.deleteFromCdn(template.getCdnUrl());
-            }
+    private Mono<Boolean> trySend(NotificationConfig config, String toEmail, List<String> cc, List<String> bcc,
+                                  PreparedEmailContent content) {
+        return emailConnectionPoolManager.getMailSender(config)
+                .flatMap(sender -> Mono.fromCallable(() -> {
+                    MimeMessage message = sender.createMimeMessage();
+                    MimeMessageHelper helper = new MimeMessageHelper(message, true);
 
-            PreparedEmailContent content = new PreparedEmailContent(resolvedSubject, htmlContent, new ArrayList<>());
+                    helper.setTo(toEmail);
+                    if (cc != null && !cc.isEmpty()) helper.setCc(cc.toArray(new String[0]));
+                    if (bcc != null && !bcc.isEmpty()) helper.setBcc(bcc.toArray(new String[0]));
 
-            try {
-                content.setAttachmentFiles(prepareAttachments(template));
-            } catch (IOException e) {
-                log.warn("Attachment preparation failed: {}", e.getMessage());
+                    helper.setSubject(content.getFinalSubject());
+                    helper.setText(content.getHtmlBody(), true);
 
-                if (!allowPartialAttachment) {
-                    failedAttachmentLogService.save(FailedAttachmentLog.builder()
-                            .templateId(templateId)
-                            .notificationConfigId(notificationConfigId)
-                            .errorMessage("Attachment download failed: " + e.getMessage())
-                            .timestamp(System.currentTimeMillis())
-                            .build());
-                    throw new RuntimeException("Attachment preparation failed", e);
-                }
+                    for (File attachment : content.getAttachmentFiles()) {
+                        helper.addAttachment(attachment.getName(), attachment);
+                    }
 
-                log.warn("Proceeding without attachments due to allowPartialAttachment=true");
-            }
-
-            // Try sending
-            if (trySend(mainConfig, toEmail, cc, bcc, content)) return;
-
-            // Fallback
-            final PreparedEmailContent finalContent = content;
-
-            if (StringUtils.isNotBlank(mainConfig.getFallbackConfigId())) {
-                NotificationConfig fallbackConfig = notificationConfigRepository
-                        .findById(mainConfig.getFallbackConfigId())
-                        .orElse(null);
-
-                if (fallbackConfig != null && trySend(fallbackConfig, toEmail, cc, bcc, finalContent)) return;
-            }
-
-            // Privacy fallback
-            if (mainConfig.getPrivacyFallbackConfig() != null && !mainConfig.getPrivacyFallbackConfig().isEmpty()) {
-                NotificationConfig dynamicConfig = new NotificationConfig();
-                dynamicConfig.setConfig(mainConfig.getPrivacyFallbackConfig());
-                dynamicConfig.setClientName(mainConfig.getClientName());
-                dynamicConfig.setChannel(mainConfig.getChannel());
-                dynamicConfig.setProvider(mainConfig.getProvider());
-                dynamicConfig.setActive(true);
-
-                if (trySend(dynamicConfig, toEmail, cc, bcc, finalContent)) return;
-            }
-
-            // All failed
-            log.error("All attempts to send email failed for template: {}", templateId);
-
-            failedEmailLogService.save(FailedEmailLog.builder()
-                    .toEmail(toEmail)
-                    .cc(cc)
-                    .bcc(bcc)
-                    .subject(resolvedSubject)
-                    .htmlContent(htmlContent)
-                    .templateId(templateId)
-                    .notificationConfigId(notificationConfigId)
-                    .errorMessage("All fallback and privacy fallback config attempts failed.")
-                    .timestamp(System.currentTimeMillis())
-                    .build());
-
-            throw new RuntimeException("Failed to send email after all fallback attempts.");
-
-        } catch (Exception e) {
-            log.error("Exception occurred while sending email: {}", e.getMessage(), e);
-            throw e;
-        } finally {
-            long duration = System.currentTimeMillis() - startTime;
-            log.info("⏱️ Email sending process completed in {} ms", duration);
-        }
+                    sender.send(message);
+                    log.info("✅ Email sent to {}", toEmail);
+                    return true;
+                }).subscribeOn(Schedulers.boundedElastic()))
+                .onErrorResume(e -> {
+                    log.warn("❌ Email sending failed: {}", e.getMessage(), e);
+                    return Mono.just(false);
+                });
     }
 
 
-    private boolean trySend(NotificationConfig config, String toEmail, List<String> cc, List<String> bcc,
-                            PreparedEmailContent content) {
-        try {
-            JavaMailSender sender = emailConnectionPoolManager.getMailSender(config);
-            MimeMessage message = sender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, true);
-
-            helper.setTo(toEmail);
-            if (cc != null && !cc.isEmpty()) helper.setCc(cc.toArray(new String[0]));
-            if (bcc != null && !bcc.isEmpty()) helper.setBcc(bcc.toArray(new String[0]));
-
-            helper.setSubject(content.getFinalSubject());
-            helper.setText(content.getHtmlBody(), true);
-
-            for (File attachment : content.getAttachmentFiles()) {
-                helper.addAttachment(attachment.getName(), attachment);
-            }
-
-            sender.send(message);
-            log.info("Email sent to {} using config {}", toEmail, config.getClientName());
-            return true;
-
-        } catch (Exception e) {
-            log.warn("Attempt failed with config [{}]: {}", config.getClientName(), e.getMessage());
-            return false;
+    private Mono<Boolean> fallbackSend(NotificationConfig mainConfig, String to, List<String> cc,
+                                       List<String> bcc, PreparedEmailContent content) {
+        if (StringUtils.isNotBlank(mainConfig.getFallbackConfigId())) {
+            return notificationConfigRepository.findById(mainConfig.getFallbackConfigId())
+                    .flatMap(fallbackConfig -> trySend(fallbackConfig, to, cc, bcc, content))
+                    .switchIfEmpty(tryPrivacyFallback(mainConfig, to, cc, bcc, content));
         }
+
+        return tryPrivacyFallback(mainConfig, to, cc, bcc, content);
     }
 
-    private List<File> prepareAttachments(TemplateEntity template) throws IOException {
-        List<File> attachmentFiles = new ArrayList<>();
-        if (template.getAttachments() != null) {
-            for (FileReference ref : template.getAttachments()) {
-                FileStorageConfig storageConfig = fileStorageConfigService.getById(ref.getFileStorageId());
-                CachedStorageClient cachedClient = fileStorageConnectionPoolManager.getClient(storageConfig);
-                FileUploader uploader = cachedClient.getUploader();
-                Map<String, Object> properties = cachedClient.getProperties();
 
-                String keyOrFilename = extractKey(ref.getFileUrl());
-                File tempFile = File.createTempFile("attachment", keyOrFilename);
-
-                try (InputStream in = uploader.downloadFile(keyOrFilename, properties);
-                     FileOutputStream out = new FileOutputStream(tempFile)) {
-                    in.transferTo(out);
-                }
-
-                attachmentFiles.add(tempFile);
-            }
+    private Mono<Boolean> tryPrivacyFallback(NotificationConfig mainConfig, String to, List<String> cc,
+                                             List<String> bcc, PreparedEmailContent content) {
+        Map<String, Object> config = mainConfig.getPrivacyFallbackConfig();
+        if (config != null && !config.isEmpty()) {
+            NotificationConfig dynamic = new NotificationConfig();
+            dynamic.setConfig(config);
+            dynamic.setClientName(mainConfig.getClientName());
+            dynamic.setProvider(mainConfig.getProvider());
+            dynamic.setChannel(mainConfig.getChannel());
+            dynamic.setActive(true);
+            return trySend(dynamic, to, cc, bcc, content);
         }
-        return attachmentFiles;
+        return Mono.just(false);
     }
 
-    private String mergeTemplateWithParams(String htmlContent, Map<String, Object> params) {
-        if (params == null || params.isEmpty()) return htmlContent;
-
-        String result = htmlContent;
-        for (Map.Entry<String, Object> entry : params.entrySet()) {
-            String placeholder = "{{" + entry.getKey() + "}}";
-            result = result.replace(placeholder, String.valueOf(entry.getValue()));
-        }
-        return result;
+    private Mono<Void> logAndFail(NotificationPayloadDTO request, PreparedEmailContent content) {
+        TemplateEntity template = request.getSnapshotTemplate();
+        NotificationConfig config = request.getSnapshotConfig();
+        return failedEmailLogService.save(FailedEmailLog.builder()
+                        .toEmail(request.getTo())
+                        .cc(request.getCc())
+                        .bcc(request.getBcc())
+                        .subject(content.getFinalSubject())
+                        .htmlContent(content.getHtmlBody())
+                        .templateId(template.getId())
+                        .notificationConfigId(config.getId())
+                        .errorMessage("All fallback and privacy fallback config attempts failed.")
+                        .timestamp(System.currentTimeMillis())
+                        .build())
+                .then(Mono.error(new RuntimeException("All fallback attempts failed")));
     }
 
     private String extractKey(String fileUrl) {

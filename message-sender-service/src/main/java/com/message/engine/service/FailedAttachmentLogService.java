@@ -4,39 +4,36 @@ import com.notification.common.model.FailedAttachmentLog;
 import com.notification.common.repository.FailedAttachmentLogRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-
-import java.util.List;
-import java.util.Optional;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 @Service
 @RequiredArgsConstructor
 public class FailedAttachmentLogService {
 
     private final FailedAttachmentLogRepository repository;
-    
-    public FailedAttachmentLog save(FailedAttachmentLog log) {
+
+    public Mono<FailedAttachmentLog> save(FailedAttachmentLog log) {
         return repository.save(log);
     }
-    
-    public List<FailedAttachmentLog> findAll() {
+
+    public Flux<FailedAttachmentLog> findAll() {
         return repository.findAll();
     }
-    
-    public Optional<FailedAttachmentLog> findById(String id) {
+
+    public Mono<FailedAttachmentLog> findById(String id) {
         return repository.findById(id);
     }
-    
-    public void deleteById(String id) {
-        repository.deleteById(id);
+
+    public Mono<Void> deleteById(String id) {
+        return repository.deleteById(id);
     }
-    
-    public void deleteAll() {
-        repository.deleteAll();
+
+    public Mono<Void> deleteAll() {
+        return repository.deleteAll();
     }
-    
-    public List<FailedAttachmentLog> findByNotificationConfigId(String configId) {
-        return repository.findAll().stream()
-                .filter(log -> configId.equals(log.getNotificationConfigId()))
-                .toList();
+
+    public Flux<FailedAttachmentLog> findByNotificationConfigId(String configId) {
+        return repository.findByNotificationConfigId(configId);
     }
 }

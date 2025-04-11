@@ -1,7 +1,9 @@
 package com.message.engine.service.webhook;
 
+import reactor.core.publisher.Mono;
+
 import java.util.Map;
 
 public interface WebhookSender {
-    void sendWebhook(Map<String, Object> config, String to, String messageBody);
+    Mono<Void> sendWebhook(Map<String, Object> config, String to, String messageBody);
 }

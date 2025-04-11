@@ -2,8 +2,9 @@ package com.notification.common.repository;
 
 import com.notification.common.model.FailedQueueLog;
 import org.springframework.data.mongodb.repository.MongoRepository;
-import org.springframework.stereotype.Repository;
+import org.springframework.data.mongodb.repository.ReactiveMongoRepository;
 
-@Repository
-public interface FailedQueueLogRepository extends MongoRepository<FailedQueueLog, String> {
+
+
+public interface FailedQueueLogRepository extends ReactiveMongoRepository<FailedQueueLog, String> {
 }

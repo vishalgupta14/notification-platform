@@ -4,6 +4,8 @@ import com.twilio.Twilio;
 import com.twilio.rest.api.v2010.account.Message;
 import com.twilio.type.PhoneNumber;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.io.File;
 import java.net.URI;
@@ -14,31 +16,34 @@ import java.util.Map;
 public class TwilioWhatsAppSender implements WhatsAppSender {
 
     @Override
-    public void sendWhatsApp(Map<String, Object> config, String to, String message, List<File> attachments) {
-        Twilio.init(config.get("accountSid").toString(), config.get("authToken").toString());
+    public Mono<Void> sendWhatsApp(Map<String, Object> config, String to, String message, List<File> attachments) {
+        return Mono.fromRunnable(() -> {
+            try {
+                Twilio.init(config.get("accountSid").toString(), config.get("authToken").toString());
 
-        String from = "whatsapp:" + config.get("from");
-        String toNumber = "whatsapp:" + to;
+                String from = "whatsapp:" + config.get("from");
+                String toNumber = "whatsapp:" + to;
 
-        try {
-            if (attachments == null || attachments.isEmpty()) {
-                Message.creator(
-                        new PhoneNumber(toNumber),
-                        new PhoneNumber(from),
-                        message
-                ).create();
-            } else {
-                for (File file : attachments) {
-                    URI mediaUri = file.toURI().toURL().toURI();
+                if (attachments == null || attachments.isEmpty()) {
                     Message.creator(
                             new PhoneNumber(toNumber),
                             new PhoneNumber(from),
                             message
-                    ).setMediaUrl(List.of(mediaUri)).create();
+                    ).create();
+                } else {
+                    for (File file : attachments) {
+                        URI mediaUri = file.toURI().toURL().toURI();
+                        Message.creator(
+                                new PhoneNumber(toNumber),
+                                new PhoneNumber(from),
+                                message
+                        ).setMediaUrl(List.of(mediaUri)).create();
+                    }
                 }
+
+            } catch (Exception e) {
+                throw new RuntimeException("❌ Failed to send WhatsApp message: " + e.getMessage(), e);
             }
-        } catch (Exception e) {
-            System.err.println("❌ Failed to send WhatsApp message: " + e.getMessage());
-        }
+        }).subscribeOn(Schedulers.boundedElastic()).then(); // Reactive, non-blocking
     }
 }

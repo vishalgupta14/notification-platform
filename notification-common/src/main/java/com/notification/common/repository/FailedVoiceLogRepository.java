@@ -2,8 +2,9 @@ package com.notification.common.repository;
 
 import com.notification.common.model.FailedVoiceLog;
 import org.springframework.data.mongodb.repository.MongoRepository;
-import org.springframework.stereotype.Repository;
+import org.springframework.data.mongodb.repository.ReactiveMongoRepository;
 
-@Repository
-public interface FailedVoiceLogRepository extends MongoRepository<FailedVoiceLog, String> {
+
+
+public interface FailedVoiceLogRepository extends ReactiveMongoRepository<FailedVoiceLog, String> {
 }

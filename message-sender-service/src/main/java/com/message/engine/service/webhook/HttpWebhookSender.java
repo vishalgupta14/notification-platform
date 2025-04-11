@@ -1,31 +1,30 @@
 package com.message.engine.service.webhook;
 
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Mono;
 
 import java.util.Map;
 
 @Component("http")
 public class HttpWebhookSender implements WebhookSender {
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final WebClient webClient = WebClient.builder()
+            .defaultHeader("Content-Type", MediaType.APPLICATION_JSON_VALUE)
+            .build();
 
     @Override
-    public void sendWebhook(Map<String, Object> config, String to, String messageBody) {
-        String endpoint = to;
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-
-        HttpEntity<String> entity = new HttpEntity<>(messageBody, headers);
-
-        ResponseEntity<String> response = restTemplate.postForEntity(endpoint, entity, String.class);
-        if (!response.getStatusCode().is2xxSuccessful()) {
-            throw new RuntimeException("Webhook failed with status: " + response.getStatusCode());
-        }
+    public Mono<Void> sendWebhook(Map<String, Object> config, String to, String messageBody) {
+        return webClient.post()
+                .uri(to)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(messageBody)
+                .retrieve()
+                .onStatus(status -> !status.is2xxSuccessful(),
+                        response -> response.bodyToMono(String.class)
+                                .flatMap(error -> Mono.error(new RuntimeException("Webhook failed: " + error))))
+                .toBodilessEntity()
+                .then(); // Convert to Mono<Void>
     }
 }

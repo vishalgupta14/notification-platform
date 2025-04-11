@@ -1,7 +1,9 @@
 package com.message.engine.service.voice;
 
+import reactor.core.publisher.Mono;
+
 import java.util.Map;
 
 public interface VoiceSender {
-    void sendVoice(Map<String, Object> config, String to, String twiml);
+    Mono<Void> sendVoice(Map<String, Object> config, String to, String twiml);
 }

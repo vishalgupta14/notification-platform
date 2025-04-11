@@ -1,7 +1,7 @@
 package com.message.node.manager;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.AsyncCache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.notification.common.dto.CachedStorageClient;
 import com.message.node.factory.FileUploaderFactory;
@@ -10,8 +10,10 @@ import com.message.node.service.FileStorageConfigService;
 import com.notification.common.service.upload.FileUploader;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Mono;
 
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 @Component
@@ -21,10 +23,10 @@ public class FileStorageConnectionPoolManager {
     private final FileUploaderFactory uploaderFactory;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    private final Cache<String, CachedStorageClient> cache = Caffeine.newBuilder()
+    private final AsyncCache<String, CachedStorageClient> cache = Caffeine.newBuilder()
             .expireAfterAccess(15, TimeUnit.MINUTES)
             .maximumSize(100)
-            .build(this::loadClient);
+            .buildAsync((configId, executor) -> loadClient(configId).toFuture());
 
     public FileStorageConnectionPoolManager(FileStorageConfigService configService,
                                             FileUploaderFactory uploaderFactory) {
@@ -32,12 +34,13 @@ public class FileStorageConnectionPoolManager {
         this.uploaderFactory = uploaderFactory;
     }
 
-    private CachedStorageClient loadClient(String configId) {
-        FileStorageConfig config = configService.getById(configId);
-        FileUploader uploader = uploaderFactory.getUploader(config.getType());
-        String hash = hashConfig(config.getProperties());
-
-        return new CachedStorageClient(uploader, config.getProperties(), hash);
+    private Mono<CachedStorageClient> loadClient(String configId) {
+        return configService.getById(configId)
+                .map(config -> {
+                    FileUploader uploader = uploaderFactory.getUploader(config.getType());
+                    String hash = hashConfig(config.getProperties());
+                    return new CachedStorageClient(uploader, config.getProperties(), hash);
+                });
     }
 
     private String hashConfig(Map<String, Object> properties) {
@@ -49,21 +52,22 @@ public class FileStorageConnectionPoolManager {
     }
 
     public void evict(String configId) {
-        cache.invalidate(configId);
+        cache.synchronous().invalidate(configId);
     }
 
-    public CachedStorageClient getClient(FileStorageConfig config) {
-        CachedStorageClient cached = cache.getIfPresent(config.getId());
-
+    public Mono<CachedStorageClient> getClient(FileStorageConfig config) {
+        String configId = config.getId();
         String newHash = hashConfig(config.getProperties());
-        if (cached != null && cached.getConfigHash().equals(newHash)) {
-            return cached;
-        }
 
-        // Recreate and cache
-        FileUploader uploader = uploaderFactory.getUploader(config.getType());
-        CachedStorageClient newClient = new CachedStorageClient(uploader, config.getProperties(), newHash);
-        cache.put(config.getId(), newClient);
-        return newClient;
+        return Mono.fromFuture(cache.get(configId, (key, executor) -> loadClient(key).toFuture()))
+                .map(cached -> {
+                    if (cached.getConfigHash().equals(newHash)) {
+                        return cached;
+                    }
+                    FileUploader uploader = uploaderFactory.getUploader(config.getType());
+                    CachedStorageClient updated = new CachedStorageClient(uploader, config.getProperties(), newHash);
+                    cache.synchronous().put(configId, updated);
+                    return updated;
+                });
     }
 }

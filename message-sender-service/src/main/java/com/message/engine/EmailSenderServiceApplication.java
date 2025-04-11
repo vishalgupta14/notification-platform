@@ -4,9 +4,10 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.data.mongodb.repository.config.EnableMongoRepositories;
+import org.springframework.data.mongodb.repository.config.EnableReactiveMongoRepositories;
 
 @SpringBootApplication
-@EnableMongoRepositories(basePackages = "com.notification.common.repository")
+@EnableReactiveMongoRepositories(basePackages = "com.notification.common.repository")
 @ComponentScan(basePackages = {
 		"com.notification.common.service",
 		"com.message.engine"

@@ -6,19 +6,18 @@ import com.notification.common.model.FailedVoiceLog;
 import com.notification.common.model.NotificationConfig;
 import com.notification.common.repository.NotificationConfigRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
 
 import java.util.Map;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class VoiceSendService {
-
-    private static final Logger log = LoggerFactory.getLogger(VoiceSendService.class);
 
     private final VoiceSenderFactory voiceSenderFactory;
     private final NotificationConfigRepository configRepository;
@@ -27,69 +26,76 @@ public class VoiceSendService {
     @Value("${notification.voice.enabled:true}")
     private boolean isVoiceSendingEnabled;
 
-    public void sendVoice(NotificationPayloadDTO request) {
+    public Mono<Void> sendVoice(NotificationPayloadDTO request) {
         long start = System.currentTimeMillis();
-        String configId = request.getSnapshotConfig().getId();
-        String templateId = request.getSnapshotTemplate().getId();
         String phoneNumber = request.getTo();
-        String voiceXml = request.getSnapshotTemplate().getContent(); // assumed to be TwiML
-
+        String voiceXml = request.getSnapshotTemplate().getContent();
         NotificationConfig mainConfig = request.getSnapshotConfig();
 
-        try {
-            if (!isVoiceSendingEnabled) {
-                log.info("[VOICE-SIMULATION] Voice sending is disabled.");
-                return;
-            }
-
-            if (trySend(mainConfig, phoneNumber, voiceXml)) return;
-
-            if (StringUtils.isNotBlank(mainConfig.getFallbackConfigId())) {
-                NotificationConfig fallback = configRepository.findById(mainConfig.getFallbackConfigId()).orElse(null);
-                if (fallback != null && trySend(fallback, phoneNumber, voiceXml)) return;
-            }
-
-            if (mainConfig.getPrivacyFallbackConfig() != null && !mainConfig.getPrivacyFallbackConfig().isEmpty()) {
-                NotificationConfig dynamicConfig = new NotificationConfig();
-                dynamicConfig.setConfig(mainConfig.getPrivacyFallbackConfig());
-                dynamicConfig.setProvider((String) mainConfig.getPrivacyFallbackConfig().get("provider"));
-                dynamicConfig.setClientName(mainConfig.getClientName());
-                dynamicConfig.setChannel(mainConfig.getChannel());
-                dynamicConfig.setActive(true);
-
-                if (trySend(dynamicConfig, phoneNumber, voiceXml)) return;
-            }
-
-            log.error("❌ Voice call failed for {}. All configs exhausted.", phoneNumber);
-            failedVoiceLogService.save(FailedVoiceLog.builder()
-                    .phoneNumber(phoneNumber)
-                    .message(voiceXml)
-                    .templateId(templateId)
-                    .notificationConfigId(configId)
-                    .timestamp(System.currentTimeMillis())
-                    .errorMessage("All fallback attempts failed.")
-                    .build());
-
-            throw new RuntimeException("Voice delivery failed");
-
-        } catch (Exception e) {
-            log.error("🚨 Error during voice delivery: {}", e.getMessage(), e);
-            throw e;
-        } finally {
-            long time = System.currentTimeMillis() - start;
-            log.info("⏱️ Voice delivery completed in {} ms", time);
+        if (!isVoiceSendingEnabled) {
+            log.info("[VOICE-SIMULATION] Voice sending is disabled.");
+            return Mono.empty();
         }
+
+        return trySend(mainConfig, phoneNumber, voiceXml)
+                .flatMap(success -> {
+                    if (success) return Mono.empty();
+
+                    return handleFallbacks(mainConfig, phoneNumber, voiceXml, request)
+                            .flatMap(fallbackSuccess -> {
+                                if (fallbackSuccess) return Mono.empty();
+                                return logFailure(request, "All fallback attempts failed.");
+                            });
+                })
+                .doFinally(signal -> {
+                    long time = System.currentTimeMillis() - start;
+                    log.info("⏱️ Voice delivery completed in {} ms", time);
+                });
     }
 
-    private boolean trySend(NotificationConfig config, String to, String xml) {
-        try {
-            VoiceSender sender = voiceSenderFactory.getSender(config.getProvider().toLowerCase()+"-voice");
+    private Mono<Boolean> trySend(NotificationConfig config, String to, String xml) {
+        return Mono.fromCallable(() -> {
+            VoiceSender sender = voiceSenderFactory.getSender(config.getProvider().toLowerCase() + "-voice");
             sender.sendVoice(config.getConfig(), to, xml);
             log.info("✅ Voice call placed to {} using provider {}", to, config.getProvider());
             return true;
-        } catch (Exception e) {
-            log.warn("⚠️ Voice sending failed using provider [{}]: {}", config.getProvider(), e.getMessage());
-            return false;
+        }).onErrorResume(e -> {
+            log.warn("⚠️ Voice sending failed using [{}]: {}", config.getProvider(), e.getMessage());
+            return Mono.just(false);
+        });
+    }
+
+    private Mono<Boolean> handleFallbacks(NotificationConfig mainConfig, String to, String xml, NotificationPayloadDTO request) {
+        if (StringUtils.isNotBlank(mainConfig.getFallbackConfigId())) {
+            return configRepository.findById(mainConfig.getFallbackConfigId())
+                    .flatMap(fallback -> trySend(fallback, to, xml))
+                    .defaultIfEmpty(false);
         }
+
+        if (mainConfig.getPrivacyFallbackConfig() != null && !mainConfig.getPrivacyFallbackConfig().isEmpty()) {
+            NotificationConfig dynamic = new NotificationConfig();
+            dynamic.setConfig(mainConfig.getPrivacyFallbackConfig());
+            dynamic.setClientName(mainConfig.getClientName());
+            dynamic.setProvider((String) mainConfig.getPrivacyFallbackConfig().get("provider"));
+            dynamic.setChannel(mainConfig.getChannel());
+            dynamic.setActive(true);
+            return trySend(dynamic, to, xml);
+        }
+
+        return Mono.just(false);
+    }
+
+    private Mono<Void> logFailure(NotificationPayloadDTO request, String errorMsg) {
+        FailedVoiceLog logEntry = FailedVoiceLog.builder()
+                .phoneNumber(request.getTo())
+                .message(request.getSnapshotTemplate().getContent())
+                .templateId(request.getSnapshotTemplate().getId())
+                .notificationConfigId(request.getSnapshotConfig().getId())
+                .timestamp(System.currentTimeMillis())
+                .errorMessage(errorMsg)
+                .build();
+
+         failedVoiceLogService.save(logEntry);
+         return Mono.empty();
     }
 }

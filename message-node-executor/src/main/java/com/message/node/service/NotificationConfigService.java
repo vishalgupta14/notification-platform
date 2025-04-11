@@ -5,77 +5,80 @@ import com.notification.common.model.NotificationConfig;
 import com.notification.common.repository.NotificationConfigRepository;
 import com.notification.common.utils.ConfigMaskingUtil;
 import com.notification.common.utils.EncryptionUtil;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
+@Slf4j
 @Service
+@RequiredArgsConstructor
 public class NotificationConfigService {
 
-    private static final Logger log = LoggerFactory.getLogger(NotificationConfigService.class);
     private final NotificationConfigRepository repository;
 
-    public NotificationConfigService(NotificationConfigRepository repository) {
-        this.repository = repository;
+    public Mono<NotificationConfig> save(NotificationConfig config) {
+        return repository.existsByClientNameAndChannelAndIsActive(config.getClientName(), config.getChannel(), true)
+                .flatMap(exists -> {
+                    if (exists) {
+                        log.error("Duplicate config attempted for clientId={}, channel={}", config.getClientName(), config.getChannel());
+                        return Mono.error(new IllegalStateException(
+                                "An active config already exists for clientId '" + config.getClientName() + "' and channel '" + config.getChannel() + "'"
+                        ));
+                    }
+
+                    config.setConfig(encryptSensitiveFields(config.getConfig()));
+                    config.setCreatedAt(LocalDateTime.now());
+                    config.setUpdatedAt(LocalDateTime.now());
+                    config.setActive(true);
+
+                    return repository.save(config)
+                            .doOnSuccess(saved -> log.info("Saved config with id={}, clientId={}, channel={}",
+                                    saved.getId(), saved.getClientName(), saved.getChannel()));
+                });
     }
 
-    public NotificationConfig save(NotificationConfig config) {
-        boolean exists = repository.existsByClientNameAndChannelAndIsActive(
-                config.getClientName(), config.getChannel(), true
-        );
-
-        if (exists) {
-            log.error("Duplicate config attempted for clientId={}, channel={}", config.getClientName(), config.getChannel());
-            throw new IllegalStateException("An active config already exists for clientId '"
-                    + config.getClientName() + "' and channel '" + config.getChannel() + "'");
-        }
-
-        config.setConfig(encryptSensitiveFields(config.getConfig()));
-        config.setCreatedAt(LocalDateTime.now());
-        config.setUpdatedAt(LocalDateTime.now());
-        config.setActive(true);
-        NotificationConfig saved = repository.save(config);
-        log.info("Saved config with id={}, clientId={}, channel={}", saved.getId(), saved.getClientName(), saved.getChannel());
-        return saved;
-    }
-
-    public NotificationConfig getActiveConfig(String clientId, String channel) {
+    public Mono<NotificationConfig> getActiveConfig(String clientId, String channel) {
         return repository.findByClientNameAndChannelAndIsActive(clientId, channel, true)
                 .map(config -> {
                     config.setConfig(decryptSensitiveFields(config.getConfig()));
                     return config;
                 })
-                .orElseThrow(() -> {
+                .switchIfEmpty(Mono.defer(() -> {
                     log.error("No active config found for clientId={}, channel={}", clientId, channel);
-                    return new IllegalStateException("No active config found for clientId '" + clientId + "' and channel '" + channel + "'");
-                });
+                    return Mono.error(new IllegalStateException("No active config found for clientId '" + clientId + "' and channel '" + channel + "'"));
+                }));
     }
 
-    public NotificationConfig findById(String id) {
+    public Mono<NotificationConfig> findById(String id) {
         return repository.findById(id)
                 .map(config -> {
                     config.setConfig(decryptSensitiveFields(config.getConfig()));
                     return config;
                 })
-                .orElseThrow(() -> {
+                .switchIfEmpty(Mono.defer(() -> {
                     log.error("No config found for id={}", id);
-                    return new IllegalStateException("No config found for id: " + id);
-                });
+                    return Mono.error(new IllegalStateException("No config found for id: " + id));
+                }));
     }
 
-    public void deleteById(String id) {
+    public Mono<Void> deleteById(String id) {
         log.warn("Deleting config with id={}", id);
-        repository.deleteById(id);
+        return repository.deleteById(id);
     }
 
-    public List<NotificationConfig> findAll() {
+    public Flux<NotificationConfig> findAll() {
         log.debug("Fetching all configs from repository");
-        return repository.findAll();
+        return repository.findAll()
+                .map(config -> {
+                    config.setConfig(decryptSensitiveFields(config.getConfig()));
+                    return config;
+                });
     }
 
     public NotificationConfigDTO toDTO(NotificationConfig config) {
@@ -91,24 +94,18 @@ public class NotificationConfigService {
     }
 
     private Map<String, Object> encryptSensitiveFields(Map<String, Object> config) {
+        if (config == null) return new HashMap<>();
         Map<String, Object> encrypted = new HashMap<>(config);
-        if (encrypted.containsKey("password")) {
-            encrypted.put("password", EncryptionUtil.encrypt(encrypted.get("password").toString()));
-        }
-        if (encrypted.containsKey("authToken")) {
-            encrypted.put("authToken", EncryptionUtil.encrypt(encrypted.get("authToken").toString()));
-        }
+        encrypted.computeIfPresent("password", (k, v) -> EncryptionUtil.encrypt(v.toString()));
+        encrypted.computeIfPresent("authToken", (k, v) -> EncryptionUtil.encrypt(v.toString()));
         return encrypted;
     }
 
     private Map<String, Object> decryptSensitiveFields(Map<String, Object> config) {
+        if (config == null) return new HashMap<>();
         Map<String, Object> decrypted = new HashMap<>(config);
-        if (decrypted.containsKey("password")) {
-            decrypted.put("password", EncryptionUtil.decrypt(decrypted.get("password").toString()));
-        }
-        if (decrypted.containsKey("authToken")) {
-            decrypted.put("authToken", EncryptionUtil.decrypt(decrypted.get("authToken").toString()));
-        }
+        decrypted.computeIfPresent("password", (k, v) -> EncryptionUtil.decrypt(v.toString()));
+        decrypted.computeIfPresent("authToken", (k, v) -> EncryptionUtil.decrypt(v.toString()));
         return decrypted;
     }
 }

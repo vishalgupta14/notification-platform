@@ -4,9 +4,8 @@ import com.notification.common.model.FailedEmailLog;
 import com.notification.common.repository.FailedEmailLogRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-
-import java.util.List;
-import java.util.Optional;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 @Service
 @RequiredArgsConstructor
@@ -17,33 +16,29 @@ public class FailedEmailLogService {
     /**
      * Save a failed email log entry.
      */
-    public FailedEmailLog save(FailedEmailLog log) {
+    public Mono<FailedEmailLog> save(FailedEmailLog log) {
         return failedEmailLogRepository.save(log);
     }
 
     /**
      * Fetch all failed email logs.
      */
-    public List<FailedEmailLog> getAllFailedLogs() {
+    public Flux<FailedEmailLog> getAllFailedLogs() {
         return failedEmailLogRepository.findAll();
     }
 
     /**
      * Fetch a single failed email log by ID.
      */
-    public Optional<FailedEmailLog> getById(String id) {
+    public Mono<FailedEmailLog> getById(String id) {
         return failedEmailLogRepository.findById(id);
     }
 
     /**
      * Delete a failed email log by ID.
      */
-    public void deleteById(String id) {
-        failedEmailLogRepository.deleteById(id);
+    public Mono<Void> deleteById(String id) {
+        return failedEmailLogRepository.deleteById(id);
     }
 
-    /**
-     * Retry sending a failed email (optional).
-     * You could inject EmailSendService here and implement retry logic.
-     */
 }

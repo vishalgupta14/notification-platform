@@ -5,71 +5,77 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.notification.common.model.FileStorageConfig;
 import com.message.node.producer.MessageProducer;
 import com.message.node.service.FileStorageConfigService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/storage-config")
+@RequiredArgsConstructor
 public class FileStorageConfigController {
 
-    private static final Logger log = LoggerFactory.getLogger(FileStorageConfigController.class);
-
-    ObjectMapper objectMapper = new ObjectMapper();
-
-    @Autowired
-    private FileStorageConfigService configService;
-
-    @Autowired
-    private MessageProducer messageProducer;
+    private final FileStorageConfigService configService;
+    private final MessageProducer messageProducer;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${storage.cache.eviction}")
     private String storageCacheEvictionQueueName;
 
     @PostMapping
-    public ResponseEntity<FileStorageConfig> create(@RequestBody FileStorageConfig config) {
+    public Mono<FileStorageConfig> create(@RequestBody FileStorageConfig config) {
         log.info("Creating new file storage config");
-        return ResponseEntity.ok(configService.save(config));
+        return configService.save(config);
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<FileStorageConfig> getById(@PathVariable String id) {
+    public Mono<FileStorageConfig> getById(@PathVariable String id) {
         log.info("Retrieving file storage config with ID: {}", id);
-        return ResponseEntity.ok(configService.getById(id));
+        return configService.getById(id);
     }
 
     @GetMapping("/all")
-    public ResponseEntity<List<FileStorageConfig>> getAll() {
+    public Flux<FileStorageConfig> getAll() {
         log.info("Retrieving all file storage configs");
-        return ResponseEntity.ok(configService.getAll());
+        return configService.getAll();
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<FileStorageConfig> update(@PathVariable String id, @RequestBody FileStorageConfig updated) throws JsonProcessingException {
+    public Mono<FileStorageConfig> update(@PathVariable String id, @RequestBody FileStorageConfig updated) {
         log.info("Updating file storage config with ID: {}", id);
-        FileStorageConfig update = configService.update(id, updated);
-        Map<String, String> payloadMap = new HashMap<>();
-        payloadMap.put("fileStorageConfigId", id);
-        String messagePayload = objectMapper.writeValueAsString(payloadMap);
-        messageProducer.sendMessage(storageCacheEvictionQueueName,messagePayload,true);
-        return ResponseEntity.ok(update);
+        return configService.update(id, updated)
+                .doOnSuccess(updatedConfig -> {
+                    try {
+                        Map<String, String> payloadMap = new HashMap<>();
+                        payloadMap.put("fileStorageConfigId", id);
+                        String messagePayload = objectMapper.writeValueAsString(payloadMap);
+                        messageProducer.sendMessage(storageCacheEvictionQueueName, messagePayload, true);
+                    } catch (JsonProcessingException e) {
+                        log.error("Failed to serialize message for eviction", e);
+                    }
+                });
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<?> delete(@PathVariable String id) throws JsonProcessingException {
+    public Mono<String> delete(@PathVariable String id) {
         log.info("Deleting file storage config with ID: {}", id);
-        configService.delete(id);
-        Map<String, String> payloadMap = new HashMap<>();
-        payloadMap.put("fileStorageConfigId", id);
-        String messagePayload = objectMapper.writeValueAsString(payloadMap);
-        messageProducer.sendMessage(storageCacheEvictionQueueName,messagePayload,true);
-        return ResponseEntity.ok("Deleted successfully");
+        return configService.delete(id)
+                .then(Mono.fromRunnable(() -> {
+                    try {
+                        Map<String, String> payloadMap = new HashMap<>();
+                        payloadMap.put("fileStorageConfigId", id);
+                        String messagePayload = objectMapper.writeValueAsString(payloadMap);
+                        messageProducer.sendMessage(storageCacheEvictionQueueName, messagePayload, true);
+                    } catch (JsonProcessingException e) {
+                        log.error("Failed to serialize message for eviction", e);
+                    }
+                }))
+                .thenReturn("Deleted successfully");
     }
 }

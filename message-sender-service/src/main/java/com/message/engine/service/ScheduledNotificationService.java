@@ -4,8 +4,8 @@ import com.notification.common.model.ScheduledNotification;
 import com.notification.common.repository.ScheduledNotificationRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-
-import java.util.List;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 @Service
 @RequiredArgsConstructor
@@ -13,11 +13,11 @@ public class ScheduledNotificationService {
 
     private final ScheduledNotificationRepository repository;
 
-    public void saveScheduledEmail(ScheduledNotification request) {
-        repository.save(request);
+    public Mono<ScheduledNotification> saveScheduledEmail(ScheduledNotification request) {
+        return repository.save(request);
     }
 
-    public List<ScheduledNotification> getActiveScheduledJobs() {
+    public Flux<ScheduledNotification> getActiveScheduledJobs() {
         return repository.findByActiveTrue();
     }
 }
